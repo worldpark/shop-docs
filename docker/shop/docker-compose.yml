@@ -1,0 +1,170 @@
+# ============================================================
+# 로컬 개발 전용 Docker Compose — 인프라 only (앱 컨테이너화 없음)
+# 앱(shop-core, notification)은 IDE에서 localhost로 직접 실행한다.
+# 운영 자격증명이 아님. 실제 .env는 커밋하지 말 것(.gitignore 등록).
+# ============================================================
+# 서비스 5개: shop-core-postgres / shop-notification-postgres / shop-kafka (KRaft) / shop-kafka-ui / shop-redis
+# ZooKeeper 없음: Kafka 3.5 deprecated, 4.0 제거된 레거시이므로 KRaft 채택.
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # shop-core 전용 PostgreSQL (호스트 5432)
+  # 앱 접속: jdbc:postgresql://localhost:5432/shop_core
+  # ----------------------------------------------------------
+  shop-core-postgres:
+    image: postgres:${POSTGRES_IMAGE_TAG:-16.4-alpine}
+    container_name: shop-core-postgres
+    environment:
+      POSTGRES_DB: ${SHOP_CORE_DB_NAME:-shop_core}        # 로컬 기본값 — 운영 아님
+      POSTGRES_USER: ${SHOP_CORE_DB_USER:-shop_core}      # 로컬 기본값 — 운영 아님
+      POSTGRES_PASSWORD: ${SHOP_CORE_DB_PASSWORD:-shop_core}  # 로컬 기본값 — 운영 아님
+    ports:
+      - "${SHOP_CORE_DB_PORT:-5432}:5432"
+    volumes:
+      - shop-core-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${SHOP_CORE_DB_USER:-shop_core}", "-d", "${SHOP_CORE_DB_NAME:-shop_core}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - shop-net
+    restart: "no"  # 로컬 일회성 기동 — 자동 재시작 불필요
+
+  # ----------------------------------------------------------
+  # notification 전용 PostgreSQL (호스트 5433 → 컨테이너 5432)
+  # 앱 접속: jdbc:postgresql://localhost:5433/notification
+  # ----------------------------------------------------------
+  shop-notification-postgres:
+    image: postgres:${POSTGRES_IMAGE_TAG:-16.4-alpine}
+    container_name: shop-notification-postgres
+    environment:
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME:-notification}        # 로컬 기본값 — 운영 아님
+      POSTGRES_USER: ${NOTIFICATION_DB_USER:-notification}      # 로컬 기본값 — 운영 아님
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-notification}  # 로컬 기본값 — 운영 아님
+    ports:
+      - "${NOTIFICATION_DB_PORT:-5433}:5432"
+    volumes:
+      - notification-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${NOTIFICATION_DB_USER:-notification}", "-d", "${NOTIFICATION_DB_NAME:-notification}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - shop-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # Kafka KRaft 단일 노드 (broker + controller 겸임)
+  # 호스트 게시: 9092 (EXTERNAL) — 앱이 localhost:9092로 접속
+  # 미게시: 9093 (CONTROLLER 쿼럼 내부), 29092 (INTERNAL 컨테이너간)
+  # ZooKeeper 없음 / depends_on 없음 (자체 컨트롤러 쿼럼 부트스트랩)
+  # cluster id: apache/kafka:3.8.1 이미지가 자동 포맷(후보 A) — KAFKA_CLUSTER_ID 불필요
+  # ----------------------------------------------------------
+  shop-kafka:
+    image: apache/kafka:${KAFKA_IMAGE_TAG:-3.8.1}
+    container_name: shop-kafka
+    environment:
+      # KRaft 역할: 단일 노드에서 broker + controller 겸임
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      # 컨트롤러 쿼럼: 자기 자신(1@shop-kafka:9093) — 외부 의존 없음
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@shop-kafka:9093
+
+      # 리스너 3종 분리
+      # CONTROLLER: KRaft 메타데이터 쿼럼 전용 (클라이언트 접근 불가)
+      # INTERNAL:   컨테이너 간 브로커 통신 (호스트 미게시)
+      # EXTERNAL:   호스트 IDE 앱 접속용 (localhost:9092)
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9093,INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://shop-kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      # 단일 브로커 필수: replication factor = 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      # 로컬 편의: 토픽 자동 생성 허용 (운영에서는 false 권장)
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # KAFKA_CLUSTER_ID: 미설정 — apache/kafka:3.8.1 이미지가 첫 기동 시
+      #   메타데이터 로그 디렉터리를 자동 포맷(cluster id 자동 생성)하는 것을 확인(후보 A).
+      #   자동 포맷이 실패하면 후보 B: 아래 주석을 해제하고 .env에 KAFKA_CLUSTER_ID를 추가.
+      # KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+
+    ports:
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
+      # 9093(CONTROLLER), 29092(INTERNAL)은 컨테이너 네트워크 전용 — 호스트 미게시
+    networks:
+      - shop-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # Kafka UI 대시보드 (로컬 개발용)
+  # 브라우저 접속: http://localhost:8085
+  # Kafka 접속: 컨테이너 네트워크 내부 리스너 shop-kafka:29092 사용
+  # ----------------------------------------------------------
+  shop-kafka-ui:
+    image: provectuslabs/kafka-ui:${KAFKA_UI_IMAGE_TAG:-latest}
+    container_name: shop-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-shop
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: shop-kafka:29092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    ports:
+      - "${KAFKA_UI_PORT:-8085}:8080"
+    depends_on:
+      - shop-kafka
+    networks:
+      - shop-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # Redis 단일 노드 (로컬 개발 전용)
+  # 호스트 게시: 6379
+  # 로컬 전용 주의: AUTH/TLS 없음. 운영 보안/클러스터 구성을 가장하지 않는다.
+  # DB index 분리: shop-core → database=0, notification → database=1 (앱 application.yml 참고)
+  # ----------------------------------------------------------
+  shop-redis:
+    image: redis:${REDIS_IMAGE_TAG:-7.4-alpine}
+    container_name: shop-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - shop-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - shop-net
+    restart: "no"  # 로컬 일회성 기동 — 자동 재시작 불필요
+
+# ----------------------------------------------------------
+# Named Volumes (PostgreSQL 데이터 영속 + Redis 데이터 영속)
+# Kafka 로그는 임시(volume 없음) — 후보 A 자동 포맷으로 재기동 시 재포맷
+# ----------------------------------------------------------
+volumes:
+  shop-core-pg-data:
+    driver: local
+  notification-pg-data:
+    driver: local
+  shop-redis-data:
+    driver: local
+
+# ----------------------------------------------------------
+# 사용자 정의 Bridge 네트워크
+# 컨테이너 간 DNS 이름 해석 필요 (shop-kafka 등)
+# ----------------------------------------------------------
+networks:
+  shop-net:
+    driver: bridge

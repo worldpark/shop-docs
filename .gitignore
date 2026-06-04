@@ -1,0 +1,11 @@
+# 별도 git 저장소로 관리
+notification/
+shop-core/
+
+# IDE
+.idea/
+.codex/
+
+# OS
+.DS_Store
+Thumbs.db
