@@ -20,6 +20,9 @@
 새 작업을 시작하기 전 `docs/architecture.md`와 작업에 관련된 `docs/rules/*rule.md`를 읽는다.
 API를 추가하거나 변경할 때는 반드시 `docs/rules/api-authorization-rule.md`를 읽고 최소 허용 권한과 소유권 검사 필요 여부를 작업 문서 또는 코드에 반영한다.
 
+## 향후 가상스레드 도입 대비
+현재 단계에서는 가상스레드를 즉시 활성화하지 않으며, 새 기능은 직접 `ThreadLocal` 사용을 피하고 블로킹 I/O를 Service/Infrastructure 경계에 둔다.
+
 - 작업 위치와 문서 맵: `docs/rules/workspace-rule.md`
 - 아키텍처/레이어 규칙: `docs/rules/architecture-rule.md`
 - 정적 자산/이미지 저장 규칙: `docs/rules/static-asset-rule.md`

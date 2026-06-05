@@ -26,8 +26,10 @@
 |---|---|---|
 | `common` | 공통 예외, BaseEntity, 공통 설정 | 횡단 공통 모듈 |
 | `security` | Spring Security 설정 | 인증/인가 인프라 |
-| `home` | 홈 화면 진입점 | SSR 화면 진입 |
+| `web` | Thymeleaf ViewController·ViewModel·Form·화면 조립 | SSR 화면 진입 전담. 도메인의 named interface(spi/dto)만 의존. 도메인 내부(Entity·Repository·비공개 Service) 직접 참조 금지. |
 | `platform` | Outbox/Kafka 스모크 검증 | 한시적 인프라 검증 모듈 |
+
+> `home` 모듈(홈 화면 ViewController 1개)은 `web` 모듈로 통합되어 제거된다(Task 003 view-implementor 단계).
 
 ## shop-core (모듈별 반복)
 - `{module}/controller`
@@ -42,7 +44,7 @@
 
 모듈 경계를 넘는 **동기 조회**가 꼭 필요할 때만 둔다. 통신 규칙은 `docs/rules/architecture-rule.md`("shop-core 모듈 간 통신")를 따른다. 모듈 간 통신은 우선 Spring Modulith 애플리케이션 이벤트로 하고, 동기 조회가 불가피할 때 아래 published port를 사용한다.
 
-- `{module}/spi` — 해당 모듈이 노출하는 **published port(named interface)**. `package-info.java`에 `@NamedInterface`로 선언한다. 포트를 **소유한 모듈**이 인터페이스를 정의하고, 구현은 외부 모듈의 어댑터가 맡는다(의존 역전).
+- `{module}/spi` — 해당 모듈이 노출하는 **published port(named interface)**. `package-info.java`에 `@NamedInterface`로 선언한다. 포트를 **소유한 모듈**이 인터페이스를 정의하고, 구현은 외부 모듈의 어댑터가 맡는다(의존 역전). 또한 **View 전용 facade(published API)** 인터페이스도 여기에 둔다 — web이 도메인 내부 Service를 직접 참조하지 않도록 도메인이 노출하는 얇은 facade. facade 구현체는 도메인 내부 `service` 패키지에 배치하고 `spi` 패키지에는 인터페이스만 둔다.
 - `{module}/adapter` — 다른 모듈의 `spi` 포트를 **구현하는 어댑터**. 구현체를 **두는 모듈**이 소유하며, 대상 모듈의 비공개 구현(service/repository/domain)이 아니라 포트(인터페이스)만 의존한다. 모듈 경계를 넘는 데이터는 DTO/스칼라로 주고받고 Entity를 노출하지 않는다.
 
 > 예(Task 009): `product/spi/UserDirectory`(@NamedInterface) ← `member/adapter/MemberUserDirectoryAdapter`. 의존 방향은 `member → product.spi` 단방향이며 `product`는 `member`를 참조하지 않는다(외부 서비스 분리 대비 의존 역전).
