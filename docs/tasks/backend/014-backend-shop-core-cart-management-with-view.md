@@ -49,7 +49,19 @@ shop-core
 - Cart Entity는 member Entity를 직접 참조하지 않고 `userId` scalar를 가진다
 - CartItem Entity는 product variant Entity를 직접 참조하지 않고 `variantId` scalar를 가진다
 - 같은 variant를 다시 담으면 새 row를 만들지 않고 기존 항목 quantity를 증가시킨다
-  - 재담기 증가는 비관적 락 없이 **atomic 증가 UPDATE**(`UPDATE cart_items SET quantity = quantity + :n WHERE ...`)로 처리한다. read-modify-write(조회 후 계산 후 저장)로 구현하지 않는다 — 동시 재담기 시 증가분 유실(lost update)을 막기 위함이다
+  - 재담기 증가는 비관적 락 없이 **stock 검증을 포함한 atomic 증가 UPDATE**로 처리한다. read-modify-write(조회 후 계산 후 저장)로 구현하지 않는다 — 동시 재담기 시 증가분 유실(lost update)과 합산 결과의 stock 초과를 함께 막기 위함이다
+    - WHERE 절에 합산 stock 조건을 포함해 원자적으로 검증한다:
+
+      ```sql
+      UPDATE cart_items
+      SET quantity = quantity + :delta
+      WHERE cart_id = :cartId
+        AND variant_id = :variantId
+        AND quantity + :delta <= :stock
+      ```
+
+    - `:stock`은 product purchase port로 조회한 scalar 값을 파라미터로 넘긴다(cart가 product 테이블을 직접 join하지 않는다)
+    - **affected row가 0이면** 합산 결과가 stock을 초과한 것이므로 `400`으로 실패 처리한다(증가분 유실 없이 거부). stock 검증을 UPDATE 이전에 별도 SELECT로만 하면 동시 재담기에서 각 요청이 `:delta <= stock`만 통과한 뒤 합산이 stock을 넘을 수 있으므로 반드시 WHERE 절 원자 검증으로 처리한다
   - 재담기로 quantity를 증가시킬 때 `addedAt`은 최초 담은 시점을 유지한다(갱신하지 않는다)
 - 장바구니/항목 **생성**은 비관적 락 없이 처리하되, unique 제약(`uq_carts_user_id`, `uq_cart_items_cart_variant`) 동시성 경합을 안전하게 처리한다
   - "없으면 생성"(cart 최초 생성, variant 첫 동시 담기)은 동시 요청 시 아직 row가 없어 락으로 직렬화할 수 없으므로, insert를 시도하고 `DataIntegrityViolationException`(unique 위반) 발생 시 기존 row를 재조회하여 atomic 증가 UPDATE로 합산한다(요청 실패로 노출하지 않는다)
@@ -61,7 +73,10 @@ shop-core
 - 장바구니 담기/수량 변경 시 현재 구매 가능한 variant인지 검증한다
   - 상품 status가 `ON_SALE`
   - variant가 active
-  - variant stock이 요청 quantity 이상
+  - stock 검증 기준은 연산별로 다르다:
+    - **신규 담기**: 요청 quantity ≤ stock
+    - **수량 변경(PATCH/폼)**: 변경 후 quantity(절대값) ≤ stock
+    - **같은 variant 재담기**: 기존 quantity + 추가 quantity ≤ stock (위 atomic UPDATE의 WHERE 절로 원자 검증)
 - 재고는 장바구니 담기/수량 변경 시 차감하지 않는다
 - 장바구니 조회 시 현재 상품/variant 상태를 반영한다
   - 상품이 비공개 상태가 되었거나 variant가 비활성화되었거나 재고가 부족하면 해당 항목을 `available=false` 또는 `stockEnough=false`로 표시한다
@@ -241,7 +256,8 @@ shop-core
 - 같은 variant를 다시 담으면 기존 cartItem quantity가 증가한다
 - quantity가 1보다 작으면 실패한다
 - 구매 불가능한 variant는 장바구니에 담을 수 없다
-- 요청 quantity가 현재 stock보다 크면 장바구니 담기와 수량 변경은 실패한다
+- stock 초과 시 실패한다(신규 담기: 요청 quantity > stock / 수량 변경: 변경 후 quantity > stock / 재담기: 기존 quantity + 추가 quantity > stock)
+- 동시 재담기에서 합산 결과가 stock을 초과하면 거부되며, 통과한 증가분의 유실 없이 atomic하게 처리된다
 - 장바구니 담기와 수량 변경은 재고를 차감하지 않는다
 - 사용자는 cartItem 수량을 변경할 수 있다
 - cartItem 수량 변경은 비관적 락 없이 처리하며, 같은 항목 동시 수정은 last write wins를 허용한다
@@ -265,11 +281,12 @@ shop-core
   - 같은 variant 재담기 시 quantity 증가
   - quantity 0 이하 실패
   - 구매 불가능 variant 담기 실패
-  - 요청 quantity가 stock 초과 시 실패
+  - 신규 담기 시 요청 quantity가 stock 초과면 실패
+  - 재담기 시 기존 quantity + 추가 quantity가 stock 초과면 실패(합산 기준 검증)
   - 수량 변경 성공
   - 수량 변경 시 비관적 락을 사용하지 않음
   - 같은 cartItem 동시 수량 변경은 last write wins 정책을 따른다
-  - 수량 변경 stock 초과 실패
+  - 수량 변경(절대값) stock 초과 실패
   - 항목 삭제 성공
   - 다른 사용자 cartItem 접근 실패
   - 장바구니 조회 시 현재 product/variant 표시 정보 조립
@@ -287,6 +304,7 @@ shop-core
   - member Entity를 노출하지 않고 scalar userId만 반환
 - 권장 동시성 테스트
   - 재담기 증가가 atomic 증가 UPDATE로 처리됨(read-modify-write 아님) — 증가분 유실 없음
+  - 재담기 atomic UPDATE의 WHERE 절 합산 stock 검증: 합산이 stock 초과면 affected row 0 → 400, 증가분 유실 없음
   - 장바구니 최초 생성 unique 경합(`uq_carts_user_id`) 복구
   - 같은 variant 동시 담기 unique 경합(`uq_cart_items_cart_variant`) 시 재조회 후 atomic 증가로 합산
 - 권장 REST/Security 테스트
