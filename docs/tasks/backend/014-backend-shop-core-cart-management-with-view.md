@@ -49,9 +49,11 @@ shop-core
 - Cart Entity는 member Entity를 직접 참조하지 않고 `userId` scalar를 가진다
 - CartItem Entity는 product variant Entity를 직접 참조하지 않고 `variantId` scalar를 가진다
 - 같은 variant를 다시 담으면 새 row를 만들지 않고 기존 항목 quantity를 증가시킨다
+  - 재담기 증가는 비관적 락 없이 **atomic 증가 UPDATE**(`UPDATE cart_items SET quantity = quantity + :n WHERE ...`)로 처리한다. read-modify-write(조회 후 계산 후 저장)로 구현하지 않는다 — 동시 재담기 시 증가분 유실(lost update)을 막기 위함이다
   - 재담기로 quantity를 증가시킬 때 `addedAt`은 최초 담은 시점을 유지한다(갱신하지 않는다)
-- 장바구니/항목 생성은 비관적 락 없이 처리하되, unique 제약(`uq_carts_user_id`, `uq_cart_items_cart_variant`) 동시성 경합을 안전하게 처리한다
-  - "없으면 생성"과 "같은 variant 재담기 증가"는 동시 요청 시 unique 위반이 발생할 수 있으므로, `DataIntegrityViolationException` 발생 시 재조회 후 기존 row에 증가시키는 방식 등으로 복구한다(요청 실패로 노출하지 않는다)
+- 장바구니/항목 **생성**은 비관적 락 없이 처리하되, unique 제약(`uq_carts_user_id`, `uq_cart_items_cart_variant`) 동시성 경합을 안전하게 처리한다
+  - "없으면 생성"(cart 최초 생성, variant 첫 동시 담기)은 동시 요청 시 아직 row가 없어 락으로 직렬화할 수 없으므로, insert를 시도하고 `DataIntegrityViolationException`(unique 위반) 발생 시 기존 row를 재조회하여 atomic 증가 UPDATE로 합산한다(요청 실패로 노출하지 않는다)
+  - 즉 증가 경합은 atomic UPDATE로, 생성 경합은 unique 제약 + 복구로 분리해 처리한다. 임시 장바구니 데이터에 비관적 락은 사용하지 않는다
 - quantity는 1 이상이어야 한다
 - cartItem 수량 변경은 임시 장바구니 데이터이므로 비관적 락을 적용하지 않고 last write wins를 허용한다
   - 같은 사용자가 같은 cartItem을 여러 탭에서 동시에 수정하면 마지막으로 처리된 요청의 quantity가 최종 값이 된다
@@ -284,8 +286,9 @@ shop-core
   - `MemberDirectory.findUserIdByEmail` email→userId 조회 성공
   - member Entity를 노출하지 않고 scalar userId만 반환
 - 권장 동시성 테스트
+  - 재담기 증가가 atomic 증가 UPDATE로 처리됨(read-modify-write 아님) — 증가분 유실 없음
   - 장바구니 최초 생성 unique 경합(`uq_carts_user_id`) 복구
-  - 같은 variant 동시 담기 unique 경합(`uq_cart_items_cart_variant`) 시 재조회 후 quantity 증가
+  - 같은 variant 동시 담기 unique 경합(`uq_cart_items_cart_variant`) 시 재조회 후 atomic 증가로 합산
 - 권장 REST/Security 테스트
   - `GET /api/v1/cart` CONSUMER 200, 비인증 401
   - `POST /api/v1/cart/items` 성공
