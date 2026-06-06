@@ -26,7 +26,7 @@
 |---|---|---|
 | `common` | 공통 예외, BaseEntity, 공통 설정 | 횡단 공통 모듈 |
 | `security` | Spring Security 설정 | 인증/인가 인프라 |
-| `web` | Thymeleaf ViewController·ViewModel·Form·화면 조립 | SSR 화면 진입 전담. 도메인의 named interface(spi/dto)만 의존. 도메인 내부(Entity·Repository·비공개 Service) 직접 참조 금지. |
+| `web` | Thymeleaf ViewController·ViewModel·Form·화면 조립·View 진입점 support | SSR 화면 진입 전담. 도메인의 named interface(spi/dto)만 의존. 도메인 내부(Entity·Repository·비공개 Service) 직접 참조 금지. `web.support`에는 `Authentication -> CurrentActor`처럼 Spring MVC/Security 진입점 값을 facade 호출용 값으로 바꾸는 보조 컴포넌트만 둔다. 도메인 소유권 검사·트랜잭션·Repository 접근·Entity 접근·상태 기반 비즈니스 판단은 금지하고 도메인 facade/service에 둔다. |
 | `platform` | Outbox/Kafka 스모크 검증 | 한시적 인프라 검증 모듈 |
 
 > `home` 모듈(홈 화면 ViewController 1개)은 `web` 모듈로 통합되어 제거된다(Task 003 view-implementor 단계).

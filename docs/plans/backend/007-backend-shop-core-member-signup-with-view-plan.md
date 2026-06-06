@@ -289,7 +289,7 @@ GET /api/v1/members/me  Authorization: Bearer {access}
 
 ## 5. 검증 방법
 
-> 실행 위치: `shop-core/`. 명령: `./gradlew test`. Redis는 `FakeRefreshTokenStore`(@Import, @Primary)로 격리, 실 DB 없이 test profile 기동. `@SpringBootTest` 류는 `@Import(FakeRefreshTokenStore.class)` + `@MockBean MemberRepository, MemberUserDetailsService` 컨벤션 준수(006/002 패턴).
+> 실행 위치: `shop-core/`. 명령: `./gradlew test`. Redis는 `FakeRefreshTokenStore`(@Import, @Primary)로 격리, 실 DB 없이 test profile 기동. `@SpringBootTest` 류는 `@Import(FakeRefreshTokenStore.class)` + `@MockitoBean MemberRepository, MemberUserDetailsService` 컨벤션 준수(006/002 패턴).
 
 ### 5.1 단위 테스트 (Mockito)
 - `MemberServiceSignupTest`: signup 성공(User 반환, role=CONSUMER, save 인자 캡처로 passwordHash가 raw≠hash·`encode` 호출 검증); `existsByEmail` true → `DuplicateEmailException`; `DataIntegrityViolationException` → `DuplicateEmailException` 변환; **저장 비밀번호가 BCrypt 해시(원문 아님)** (ArgumentCaptor로 `User.passwordHash` ≠ raw, BCrypt prefix `$2`); 기본 role `CONSUMER`.
@@ -301,7 +301,7 @@ GET /api/v1/members/me  Authorization: Bearer {access}
 - 검증 실패(잘못된 email / 짧은 pw / 비번 불일치) → 400 ErrorResponse(status/error/message/path).
 - 중복 이메일 → 409 ErrorResponse.
 - `GET /api/v1/members/me`: 유효 Bearer → 200 + 본인 MeResponse; **비인증 → 401**(ErrorResponse JSON, redirect 아님).
-- `MemberRepository` @MockBean stub(existsByEmail/save/findById), `PasswordEncoder`는 실 빈(BCrypt) 또는 mock.
+- `MemberRepository` @MockitoBean stub(existsByEmail/save/findById), `PasswordEncoder`는 실 빈(BCrypt) 또는 mock.
 
 ### 5.3 View MockMvc (`MemberSignupViewControllerTest`)
 - `GET /signup` → 200, view `member/signup`, **`_csrf` 포함**(CSRF 렌더), 공통 레이아웃 마커(footer) 포함.
@@ -311,7 +311,7 @@ GET /api/v1/members/me  Authorization: Bearer {access}
 - login 화면 `param.signup` 메시지·회원가입 링크: `GET /login?signup` → 본문에 안내 메시지 + `@{/signup}` 링크(또는 LayoutRenderingTest 분리 테스트).
 
 ### 5.4 운영 배선 회귀 (`MemberWiringTest`, P1/testing-rule)
-- **fake 미import 금지 위반 주의**: 본 회귀는 신규 빈이 운영 컴포넌트 스캔에서 실제 등록되는지 확인. `@SpringBootTest`(test profile)로 컨텍스트 기동 후 `context.getBean(MemberRestController.class)`, `MemberServiceResponse.class`, `MemberSignupViewController.class` 등록 단언. (RefreshTokenStore는 fake 필요하므로 `@Import(FakeRefreshTokenStore.class)`는 유지하되, 본 Task 신규 빈들은 fake로 대체되는 대상이 아니므로 운영 구현체가 그대로 등록됨 — fake가 신규 빈 배선을 가리지 않음을 단언). MemberRepository는 @MockBean(슬라이스 회피).
+- **fake 미import 금지 위반 주의**: 본 회귀는 신규 빈이 운영 컴포넌트 스캔에서 실제 등록되는지 확인. `@SpringBootTest`(test profile)로 컨텍스트 기동 후 `context.getBean(MemberRestController.class)`, `MemberServiceResponse.class`, `MemberSignupViewController.class` 등록 단언. (RefreshTokenStore는 fake 필요하므로 `@Import(FakeRefreshTokenStore.class)`는 유지하되, 본 Task 신규 빈들은 fake로 대체되는 대상이 아니므로 운영 구현체가 그대로 등록됨 — fake가 신규 빈 배선을 가리지 않음을 단언). MemberRepository는 @MockitoBean(슬라이스 회피).
 - 근거: 006 `RefreshTokenStoreWiringTest` 패턴 계승. 신규 진입 빈(Controller/ServiceResponse) 의존이 운영에서 모두 해결됨을 보장.
 
 ### 5.5 기존 테스트 비파괴

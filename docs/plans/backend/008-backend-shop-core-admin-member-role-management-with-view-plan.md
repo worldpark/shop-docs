@@ -294,7 +294,7 @@ role=ADMIN/미정의 값   → RoleChangeNotAllowedException(400) / HttpMessageN
 
 ## 5. 검증 방법
 
-> 실행 위치: `shop-core/`. 명령: `./gradlew test`. Redis는 `FakeRefreshTokenStore`(@Import, @Primary)로 격리. `@SpringBootTest` 류는 `@Import(FakeRefreshTokenStore.class)` + `@MockBean MemberRepository, MemberUserDetailsService` 컨벤션 준수(006 패턴). 실 DB 없이 test profile 기동.
+> 실행 위치: `shop-core/`. 명령: `./gradlew test`. Redis는 `FakeRefreshTokenStore`(@Import, @Primary)로 격리. `@SpringBootTest` 류는 `@Import(FakeRefreshTokenStore.class)` + `@MockitoBean MemberRepository, MemberUserDetailsService` 컨벤션 준수(006 패턴). 실 DB 없이 test profile 기동.
 
 ### 5.1 단위 테스트 (Mockito)
 - `MemberServiceAdminTest`:
@@ -310,7 +310,7 @@ role=ADMIN/미정의 값   → RoleChangeNotAllowedException(400) / HttpMessageN
 - `GET /api/v1/admin/members`: **ADMIN(@WithMockUser(roles="ADMIN") 또는 Bearer ROLE_ADMIN) → 200** + PageResponse 구조; **SELLER → 403**, **CONSUMER → 403**(ErrorResponse JSON); **비인증 → 401**(ErrorResponse JSON, redirect 아님).
 - `PATCH /api/v1/admin/members/{id}/role`: ADMIN 성공 200/204; 대상 없음 → 404; 자기/마지막 ADMIN → 409; `role=ADMIN` → 400; `@NotNull` 누락 → 400; SELLER/CONSUMER → 403; 비인증 → 401.
 - 응답 본문에 **password_hash/token 미포함** jsonPath 부재 단언.
-- `MemberRepository` @MockBean stub(search/countByRole/findById). REST principal=userId(long) 규약으로 `changeRole` 자기 강등 케이스 구성.
+- `MemberRepository` @MockitoBean stub(search/countByRole/findById). REST principal=userId(long) 규약으로 `changeRole` 자기 강등 케이스 구성.
 
 ### 5.3 View MockMvc (`AdminMemberViewControllerTest`)
 - `GET /admin/members`(@WithMockUser(roles="ADMIN")) → 200, view `admin/members`, model `members`·`searchCondition` 존재, **검색 폼·권한변경 폼 렌더**(목록/검색/변경 폼 마커), 민감정보 미표시.
@@ -320,7 +320,7 @@ role=ADMIN/미정의 값   → RoleChangeNotAllowedException(400) / HttpMessageN
 - **권한 없는 사용자 차단**: SELLER/CONSUMER `GET /admin/members` → 403; 비인증 → `/login` redirect(302). (View 체인 인가 — SecurityConfig 매처 반영.)
 
 ### 5.4 운영 배선 회귀 (`AdminMemberWiringTest`, P1/testing-rule)
-- `@SpringBootTest`(test profile, `@Import(FakeRefreshTokenStore.class)` + `@MockBean MemberRepository, MemberUserDetailsService`)로 컨텍스트 기동 후 `context.getBean(AdminMemberRestController.class)`, `AdminMemberServiceResponse.class`, `AdminMemberViewController.class` 등록 단언. **신규 진입 빈은 fake 대체 대상이 아니므로 운영 구현체가 그대로 등록됨**(fake가 신규 배선을 가리지 않음을 확인 — 006 `RefreshTokenStoreWiringTest`·testing-rule 계승). `RefreshTokenStore`는 운영 구현(`RedisRefreshTokenStore`) 배선이 006 `RefreshTokenStoreWiringTest`로 이미 보장됨 — 본 Task는 그 빈을 변경하지 않음.
+- `@SpringBootTest`(test profile, `@Import(FakeRefreshTokenStore.class)` + `@MockitoBean MemberRepository, MemberUserDetailsService`)로 컨텍스트 기동 후 `context.getBean(AdminMemberRestController.class)`, `AdminMemberServiceResponse.class`, `AdminMemberViewController.class` 등록 단언. **신규 진입 빈은 fake 대체 대상이 아니므로 운영 구현체가 그대로 등록됨**(fake가 신규 배선을 가리지 않음을 확인 — 006 `RefreshTokenStoreWiringTest`·testing-rule 계승). `RefreshTokenStore`는 운영 구현(`RedisRefreshTokenStore`) 배선이 006 `RefreshTokenStoreWiringTest`로 이미 보장됨 — 본 Task는 그 빈을 변경하지 않음.
 
 ### 5.5 기존 테스트 비파괴
 - `SecurityConfigTest`(006, View 체인 a~e+CSRF): `/admin/**` 매처 추가는 가산적 — 기존 공개/인증 경로 동작 비파괴.

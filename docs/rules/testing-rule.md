@@ -9,7 +9,8 @@
 - 통과한 테스트 "개수"를 안전의 근거로 삼지 않는다. 무엇을 검증했는지를 근거로 삼는다.
 
 ## 테스트 더블(mock/fake/@Primary)과 운영 배선
-- 어떤 인터페이스를 `@MockBean`/`@Primary` fake로 대체하면, **그 인터페이스의 운영 구현체는 그 테스트에서 검증되지 않는다.** 이를 전제로 한다.
+- 어떤 인터페이스를 `@MockitoBean`/`@Primary` fake로 대체하면, **그 인터페이스의 운영 구현체는 그 테스트에서 검증되지 않는다.** 이를 전제로 한다.
+  - 테스트 더블 애너테이션은 Spring Boot 3.4+에서 deprecated된 `@MockBean`/`@SpyBean` 대신 `@MockitoBean`/`@MockitoSpyBean`(`org.springframework.test.context.bean.override.mockito.*`)을 사용한다.
 - 운영 구현체가 운영과 동일한 조건(컴포넌트 스캔 + 자동설정)에서 **실제로 빈으로 등록되는지** 검증하는 테스트를 별도로 둔다.
   - 예: fake를 import하지 않고 `@SpringBootTest`로 컨텍스트를 띄워 `assertThat(context.getBean(Iface.class)).isInstanceOf(RealImpl.class)`를 단언한다.
   - 이 회귀 테스트는 **버그가 있던 코드에서 반드시 실패**해야 의미가 있다.

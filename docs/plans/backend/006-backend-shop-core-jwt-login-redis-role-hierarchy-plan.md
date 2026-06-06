@@ -355,7 +355,7 @@ RoleHierarchy(ROLE_ADMIN > ROLE_SELLER > ROLE_CONSUMER)
 - 토큰 없음 401 / 위조·만료 토큰 401(ErrorResponse JSON, redirect 아님).
 - 권한별: 테스트 보호 경로(또는 `@WithMockUser(roles=...)`)로 ADMIN→하위 허용, CONSUMER→상위 403(ErrorResponse).
 - `refresh` 정상 → 200; logout 후 동일 refresh → 401.
-- MemberRepository는 테스트에서 mock(@MockBean) 또는 fake로 사용자 조달(citext/실 DB 미사용).
+- MemberRepository는 테스트에서 mock(@MockitoBean) 또는 fake로 사용자 조달(citext/실 DB 미사용).
 
 ### 5.3 컨텍스트 테스트
 - `ShopCoreApplicationTests.contextLoads()` 비파괴(test profile, DataSource/Kafka/Flyway 제외 유지 + Redis 처리). JWT 빈/필터체인이 DB·Redis 부재 컨텍스트에서 기동되도록 확인(JwtProperties secret 테스트값 제공, Redis 자동설정 정책 5.4).
@@ -363,8 +363,8 @@ RoleHierarchy(ROLE_ADMIN > ROLE_SELLER > ROLE_CONSUMER)
 
 ### 5.4 기존 테스트 비파괴 / 수정
 - **`BaseEntityTest`**: auditing(AuditingHandler/markCreated/@CreatedDate) 검증 → **read-only 매핑 검증으로 수정**(@Column insertable=false·updatable=false, `@CreatedDate`/`@LastModifiedDate`/`@EntityListeners` 부재, `@MappedSuperclass` 유지). (BaseEntity 정렬로 인한 허용된 수정)
-- **`SecurityConfigTest`**(a~e + CSRF): InMemory 자격증명(user/dev1234)이 사라지므로 View formLogin 성공/실패 케이스의 사용자 조달을 DB 기반(@MockBean MemberRepository/MemberUserDetailsService로 BCrypt 사용자 stub)으로 조정. View 체인 동작(302 redirect, /login 200, CSRF 403)은 그대로 유지. (필터체인 분리·인증소스 전환으로 인한 허용 수정)
-- **test application.yml**: jwt secret 더미 + Redis 자동설정. Redis 미기동 컨텍스트에서 `RedisRefreshTokenStore`(StringRedisTemplate 의존)가 풀 컨텍스트(@SpringBootTest)를 깨지 않도록 — 기본: Redis 자동설정 유지(lettuce는 lazy 연결이라 미기동이어도 빈 생성은 통과)하거나, MockMvc 테스트에서 `RefreshTokenStore`를 `@MockBean`/fake로 교체. **구현 시 확인**: contextLoads가 Redis 연결을 강제하지 않는지(기본 lazy). 깨지면 test profile에서 `RedisAutoConfiguration` 제외 + RefreshTokenStore fake 빈 제공.
+- **`SecurityConfigTest`**(a~e + CSRF): InMemory 자격증명(user/dev1234)이 사라지므로 View formLogin 성공/실패 케이스의 사용자 조달을 DB 기반(@MockitoBean MemberRepository/MemberUserDetailsService로 BCrypt 사용자 stub)으로 조정. View 체인 동작(302 redirect, /login 200, CSRF 403)은 그대로 유지. (필터체인 분리·인증소스 전환으로 인한 허용 수정)
+- **test application.yml**: jwt secret 더미 + Redis 자동설정. Redis 미기동 컨텍스트에서 `RedisRefreshTokenStore`(StringRedisTemplate 의존)가 풀 컨텍스트(@SpringBootTest)를 깨지 않도록 — 기본: Redis 자동설정 유지(lettuce는 lazy 연결이라 미기동이어도 빈 생성은 통과)하거나, MockMvc 테스트에서 `RefreshTokenStore`를 `@MockitoBean`/fake로 교체. **구현 시 확인**: contextLoads가 Redis 연결을 강제하지 않는지(기본 lazy). 깨지면 test profile에서 `RedisAutoConfiguration` 제외 + RefreshTokenStore fake 빈 제공.
 - `LayoutRenderingTest`/`RedisPropertiesTest`/exception advice 테스트: 비파괴 확인(변경 없음 목표).
 
 ### 5.5 권장 수동/docker 검증 (CI 외, 구현자 별도 확인)

@@ -452,7 +452,7 @@ POST /seller/products/42  → @Valid 재렌더 / 성공 update → redirect:/sel
 
 ## 5. 검증 방법
 
-> 실행 위치: `shop-core/`. 명령: `./gradlew test`. `@SpringBootTest` 류는 008 컨벤션(`@Import(FakeRefreshTokenStore.class)` + `@MockBean` JPA/DB 의존)을 계승해 실 DB·Redis 없이 test profile 기동.
+> 실행 위치: `shop-core/`. 명령: `./gradlew test`. `@SpringBootTest` 류는 008 컨벤션(`@Import(FakeRefreshTokenStore.class)` + `@MockitoBean` JPA/DB 의존)을 계승해 실 DB·Redis 없이 test profile 기동.
 
 ### 5.1 단위 테스트 (Mockito)
 - `CategoryServiceTest`: list 위임, create 성공(save 인자), **slug 중복 → DuplicateSlugException(409)**, **parent 미존재 → CategoryNotFoundException(404)**, update 성공(자기 slug 유지 통과).
@@ -461,18 +461,18 @@ POST /seller/products/42  → @Valid 재렌더 / 성공 update → redirect:/sel
 
 ### 5.2 Security/REST MockMvc
 - `CategoryRestControllerSecurityTest`: `GET /api/v1/categories` **비인증 200**(public); `POST/PATCH /api/v1/admin/categories` **ADMIN 성공·SELLER 403·CONSUMER 403·비인증 401**, slug 중복 409, parent 404.
-- `SellerProductRestControllerSecurityTest`: `POST /api/v1/seller/products` **SELLER 200·ADMIN 200·CONSUMER 403·비인증 401**, basePrice 음수 400; `PATCH /{id}` **소유자 200·타 판매자 404·ADMIN 200·미존재 404**. 응답 jsonPath에 민감/Entity 필드 부재 단언. `ProductRepository`/`CategoryRepository` `@MockBean` stub, REST principal=userId(long) 규약으로 소유권 케이스 구성.
+- `SellerProductRestControllerSecurityTest`: `POST /api/v1/seller/products` **SELLER 200·ADMIN 200·CONSUMER 403·비인증 401**, basePrice 음수 400; `PATCH /{id}` **소유자 200·타 판매자 404·ADMIN 200·미존재 404**. 응답 jsonPath에 민감/Entity 필드 부재 단언. `ProductRepository`/`CategoryRepository` `@MockitoBean` stub, REST principal=userId(long) 규약으로 소유권 케이스 구성.
 
 ### 5.3 View MockMvc (`SellerProductViewControllerTest`)
 - `GET /seller/products/new`(@WithMockUser(roles="SELLER")) → 200, view `seller/product-form`, model `productForm`/`categories`/`statuses` 존재, **CSRF 히든 마커 렌더**.
-- `POST /seller/products`(`with(csrf())`, 유효 폼) → 302 `redirect:/seller/products/{id}/edit`, `productService.register` 호출(actorId 통일 — **`UserDirectory`를 `@MockBean`/fake로 주입해 `findUserIdByEmail(email)`→고정 userId stub**으로 격리. member 의존 없이 View 단독 검증).
+- `POST /seller/products`(`with(csrf())`, 유효 폼) → 302 `redirect:/seller/products/{id}/edit`, `productService.register` 호출(actorId 통일 — **`UserDirectory`를 `@MockitoBean`/fake로 주입해 `findUserIdByEmail(email)`→고정 userId stub**으로 격리. member 의존 없이 View 단독 검증).
 - `POST /seller/products`(검증 실패 — name 누락/basePrice 음수) → 200 view `seller/product-form` 재렌더 + `categories`/`statuses` 재주입(입력값·메시지 유지).
 - `GET /seller/products/{id}/edit`: 소유자 200 / 타인·미존재 → 404(`error/error`).
 - **권한 차단**: CONSUMER `GET /seller/products/new` → 403; 비인증 → `/login` redirect(302). ADMIN → 200(함의).
 
 ### 5.4 운영 배선 회귀 (`ProductWiringTest`, P1/testing-rule)
-- `@SpringBootTest`(test profile, `@Import(FakeRefreshTokenStore.class)` + `@MockBean ProductRepository, CategoryRepository, MemberRepository`)로 컨텍스트 기동 후 신규 진입 빈(`CategoryRestController`, `AdminCategoryRestController`, `SellerProductRestController`, `SellerProductViewController`, `CategoryServiceResponse`, `ProductServiceResponse`, `CategoryService`, `ProductService`) 등록 단언. fake가 신규 배선을 가리지 않음 확인(008 `AdminMemberWiringTest` 패턴 계승).
-- **포트-어댑터 운영 배선 단언(추가)**: `MemberUserDirectoryAdapter`가 `UserDirectory` 빈으로 등록되고, 컨텍스트에서 `UserDirectory` 타입이 어댑터로 **단일 운영 배선**됨을 단언(`SellerProductViewController`의 `UserDirectory` 주입이 운영에서 해결됨 확인). 어댑터가 `MemberService`에 의존하므로 **`MemberService`(및 그 추이 의존)가 운영 빈으로 살아있어야** 한다 — 따라서 `@MockBean` 목록에서 `MemberUserDetailsService`는 제외하지 않되, **`MemberService`/어댑터 자체는 mock하지 않는다**(운영 배선 점검 목적). `MemberRepository`는 DB 절단을 위해 `@MockBean` 유지(어댑터→MemberService→MemberRepository 경로는 빈 존재만 확인, 실제 조회 불요).
+- `@SpringBootTest`(test profile, `@Import(FakeRefreshTokenStore.class)` + `@MockitoBean ProductRepository, CategoryRepository, MemberRepository`)로 컨텍스트 기동 후 신규 진입 빈(`CategoryRestController`, `AdminCategoryRestController`, `SellerProductRestController`, `SellerProductViewController`, `CategoryServiceResponse`, `ProductServiceResponse`, `CategoryService`, `ProductService`) 등록 단언. fake가 신규 배선을 가리지 않음 확인(008 `AdminMemberWiringTest` 패턴 계승).
+- **포트-어댑터 운영 배선 단언(추가)**: `MemberUserDirectoryAdapter`가 `UserDirectory` 빈으로 등록되고, 컨텍스트에서 `UserDirectory` 타입이 어댑터로 **단일 운영 배선**됨을 단언(`SellerProductViewController`의 `UserDirectory` 주입이 운영에서 해결됨 확인). 어댑터가 `MemberService`에 의존하므로 **`MemberService`(및 그 추이 의존)가 운영 빈으로 살아있어야** 한다 — 따라서 `@MockitoBean` 목록에서 `MemberUserDetailsService`는 제외하지 않되, **`MemberService`/어댑터 자체는 mock하지 않는다**(운영 배선 점검 목적). `MemberRepository`는 DB 절단을 위해 `@MockitoBean` 유지(어댑터→MemberService→MemberRepository 경로는 빈 존재만 확인, 실제 조회 불요).
 
 ### 5.5 기존 테스트 비파괴
 - `SecurityConfigTest`(006/008): `/api/v1/seller/**`·`/seller/**`·`/api/v1/categories` 매처는 가산적 — 기존 공개/auth/admin 경로 동작 비파괴.

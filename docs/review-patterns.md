@@ -5,7 +5,7 @@
 
 ---
 
-## P1. 테스트 더블(@Primary/@MockBean)이 운영 배선을 가려 생긴 거짓 통과
+## P1. 테스트 더블(@Primary/@MockitoBean)이 운영 배선을 가려 생긴 거짓 통과
 
 - 발견 Task: 006 (shop-core JWT 로그인) — 구현 직후 reviewer PASS, `./gradlew test` 87개 통과했으나 실제 앱 기동에서 실패.
 - 증상(런타임):
@@ -30,7 +30,7 @@
 - 흔한 연쇄: 사용자 `@Bean @ConditionalOnBean(오토컨피그빈)` → 사용자 `@Component @ConditionalOnBean(그 사용자빈)` → 최종 주입처에서 NoSuchBean.
 
 ### 리뷰 체크리스트 (이 패턴 적용)
-- [ ] 어떤 인터페이스를 `@MockBean`/`@Primary` fake로 교체하는 테스트가 있는가? 있다면 그 **인터페이스의 운영 구현체가 실제로 빈 등록되는지** 검증하는 테스트가 따로 있는가?
+- [ ] 어떤 인터페이스를 `@MockitoBean`/`@Primary` fake로 교체하는 테스트가 있는가? 있다면 그 **인터페이스의 운영 구현체가 실제로 빈 등록되는지** 검증하는 테스트가 따로 있는가?
 - [ ] fake/더블이 `@Component`로 자동 스캔되지는 않는가? (자동 스캔되면 운영 배선 검증 테스트에도 새어 들어가 무의미해진다 → `@Import` 전용으로 두라.)
 - [ ] 테스트 `application.yml`의 `spring.autoconfigure.exclude`가 **운영 구현체의 의존(예: `StringRedisTemplate`)을 없애** 그 구현체가 테스트에서 절대 생성되지 않게 만들고 있지 않은가?
 - [ ] 사용자 `@Component`/`@Bean`에 `@ConditionalOnBean`이 붙어 있지 않은가? 붙어 있다면 평가 순서로 인해 운영에서 빈이 누락될 수 있다. (오토컨피그가 이미 제공하는 빈이면 커스텀 빈을 제거하고 위임하라.)

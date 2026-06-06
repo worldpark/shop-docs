@@ -75,7 +75,7 @@
 ---
 
 ## 3. 검증 영향
-- **View 테스트**(`SellerProductViewControllerTest`): `UserDirectory`를 `@MockBean`/fake로 주입해 `findUserIdByEmail` stub → member 의존 없이 View 단독 검증.
+- **View 테스트**(`SellerProductViewControllerTest`): `UserDirectory`를 `@MockitoBean`/fake로 주입해 `findUserIdByEmail` stub → member 의존 없이 View 단독 검증.
 - **배선 회귀**(`ProductWiringTest`): `MemberUserDirectoryAdapter` 빈 등록 + `UserDirectory` 운영 배선 단언 추가.
 - **ModularityTests**: `product → member` 참조 0, `member → product.spi`(@NamedInterface) 단방향만 허용. `ownerId`는 스칼라 long(member Entity 미노출).
 

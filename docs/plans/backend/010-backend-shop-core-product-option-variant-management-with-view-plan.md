@@ -35,7 +35,7 @@
 - 예외: `BusinessException(message, HttpStatus)` 상속 커스텀 예외. REST는 `RestExceptionHandler`가 status JSON, View는 `ViewExceptionHandler`가 error 뷰. Duplicate류 409 컨벤션(`DuplicateEmailException`/`DuplicateSlugException`).
 - DTO: Request=record+검증 어노테이션, Response=record+`from(Entity)` 정적 팩토리, Entity 직접 노출 금지. 목록은 `List<T>` 또는 `PageResponse<T>`.
 - 소유권: `ProductService.checkOwnership`(ADMIN 스킵, 비소유 → `ProductAccessDeniedException` 404=존재 은닉).
-- 테스트 프로파일: DataSource/JPA/Flyway/Kafka 자동설정 제외 → **DB 없이 부팅**, repository는 `@MockBean`/`@Mock`. (∴ 신규 검증의 실제 SQL은 통합 검증 대상이 아니며, 서비스 단위 테스트에서 mock으로 불변식 로직을 검증한다 — 기존 프로젝트 자세 계승.)
+- 테스트 프로파일: DataSource/JPA/Flyway/Kafka 자동설정 제외 → **DB 없이 부팅**, repository는 `@MockitoBean`/`@Mock`. (∴ 신규 검증의 실제 SQL은 통합 검증 대상이 아니며, 서비스 단위 테스트에서 mock으로 불변식 로직을 검증한다 — 기존 프로젝트 자세 계승.)
 
 ---
 
@@ -200,7 +200,7 @@ public interface SellerProductVariantFacade {
 ### REST/Security(@SpringBootTest+MockMvc+JWT 토큰)
 - 조회 SELLER 200 / ADMIN 200 / CONSUMER 403 / 비인증 401.
 - 옵션 생성 성공·중복 409, 옵션값 생성 성공·중복 409, variant 생성 성공·검증 실패(400/409), 타 판매자 상품 접근 404, 하위리소스 불일치 404, Entity 미노출 단언.
-### View(@SpringBootTest+MockMvc+@WithMockUser+facade @MockBean)
+### View(@SpringBootTest+MockMvc+@WithMockUser+facade @MockitoBean)
 - `GET /seller/products/{productId}/variants` SELLER 렌더(뷰명/모델키 product·options·variants·optionForm·optionValueForm·variantForm) / CONSUMER 403 / 비인증 redirect / ADMIN 200.
 - 폼 CSRF 포함, 옵션·옵션값·variant 생성 성공 redirect, @Valid 검증 실패 시 `seller/product-variants` 재렌더, BusinessException flashError redirect.
 

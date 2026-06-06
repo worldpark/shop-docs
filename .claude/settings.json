@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "shop-core",
+      "notification"
+    ]
+  }
+}
