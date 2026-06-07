@@ -5,7 +5,10 @@
 
 ## 공통
 - 테스트 없이 기능/의존성 변경을 완료 처리하지 않는다.
-- 테스트는 JUnit 5 + Mockito를 사용한다.
+- 테스트 레이어와 도구:
+  - 단위: JUnit 5 + Mockito.
+  - DB 통합: `@DataJpaTest` + **Testcontainers(PostgreSQL)**. H2로 재현 불가한 PostgreSQL 고유 동작(예: NULL 파라미터 타입 추론) 회귀를 잡는다.
+  - 브라우저 E2E: **Playwright for Java**. 핵심 사용자 여정을 얇게 검증한다. 방식·운영 주의는 `docs/plans/performance/001-e2e-playwright-java-test-strategy.md`, 실행은 `shop-core/src/e2eTest/README.md`.
 - 통과한 테스트 "개수"를 안전의 근거로 삼지 않는다. 무엇을 검증했는지를 근거로 삼는다.
 
 ## 테스트 더블(mock/fake/@Primary)과 운영 배선
@@ -30,3 +33,4 @@
 ## 검증 실행
 - 변경한 프로젝트에서 `./gradlew test` 전체 통과를 확인한다.
 - 인프라(DB/Kafka/Redis)가 필요한 실동작은 가능하면 로컬 docker-compose로 수동 확인하고, 확인/미확인 항목을 작업 보고에 남긴다.
+- 브라우저 E2E(`./gradlew e2eTest`)는 `check`/`test`에 포함되지 않는 **별도 태스크**다(실행 중인 앱 필요 — 일반 `test`의 인프라 비의존 원칙 보존). 실행/판정은 `e2e-runner` 에이전트 또는 CI 스텝이 담당한다.

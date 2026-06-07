@@ -14,3 +14,9 @@ shop-core/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local docker/env
+docker/shop/.env
+
+# Build output (Gradle) — Playwright Java E2E 산출물(build/e2e-artifacts/) 포함
+build/

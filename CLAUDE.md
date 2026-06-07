@@ -13,7 +13,7 @@
 - 모듈 구조 (shop-core): Spring Modulith
 - 메시징: Kafka (JSON 직렬화)
 - 빌드: Gradle (레포별 독립 빌드)
-- 테스트: JUnit 5 + Mockito
+- 테스트: JUnit 5 + Mockito (단위), Testcontainers (DB 통합), Playwright for Java (브라우저 E2E — `docs/plans/performance/001-e2e-playwright-java-test-strategy.md`)
 
 ## 작업 규칙
 세부 작업 규칙은 `docs/rules/*rule.md`를 따른다.
