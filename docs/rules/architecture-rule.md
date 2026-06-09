@@ -18,6 +18,7 @@
 - 모듈 간 통신은 우선 **Spring Modulith 애플리케이션 이벤트**(`ApplicationEventPublisher` + `@ApplicationModuleListener`)로 한다. 이는 shop-core **내부** 이벤트이며, notification으로 나가는 **Kafka 이벤트**(`docs/architecture.md` 섹션 5)와 구분한다.
 - 동기 조회가 꼭 필요하면 각 모듈이 노출한 **published API(named interface/port)**를 통해서만 호출한다. 비공개 구현에는 접근하지 않는다.
 - 모듈 경계를 넘는 데이터는 DTO로 주고받고 Entity를 모듈 밖으로 노출하지 않는다.
+- **published API(spi/facade) 시그니처는 web 등 호출자 계층 타입을 파라미터·반환 타입으로 받지 않는다.** 포트는 자기 모듈 소유 DTO/scalar만 노출하고, web 폼/요청 객체 → 포트 DTO 변환은 호출자(web) 책임으로 둔다(`web → domain.spi` 단방향 유지, 포트가 web을 역참조하지 않게 한다).
 
 ## notification
 - 이벤트 진입점은 `Consumer -> Service -> Repository` 레이어를 따른다.
