@@ -21,4 +21,5 @@
 - Task 005(Redis 기반/lock namespace) 완료. 적용 대상 도메인(재고/주문/쿠폰) Task.
 
 ## 참고
+- `docs/concurrency-control-guide.md`
 - `docs/plans/infra/005-...-plan.md` §1.3, `docs/entity/database_design.md` §6
