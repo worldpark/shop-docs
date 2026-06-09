@@ -50,6 +50,7 @@ shop-core
   - `016`에서 합의한 포트 시그니처를 변경하지 않는다(거절을 표현하는 필드는 이미 존재)
 - `Payment` Entity에 `failed` 전이 의도 메서드(`markFailed(failureCode, failureReason)`)를 추가한다
   - Setter 금지. `failed`는 `ready`/기존 `failed`(재시도)에서만 전이 가능하고, `paid`에서 `failed`로의 역전이는 도메인 예외로 막는다
+  - **재시도 승인 전이 확장(Ma1)**: `016`의 `markPaid`는 `ready→paid`만 허용하므로, 거절 후 재시도 승인을 지원하려면 `markPaid`가 `failed→paid` 전이도 허용하도록 확장한다(`ready→paid` + `failed→paid` 모두 허용, `paid` 재호출은 멱등). 이 확장은 `016` 승인 happy path(`ready→paid`)를 회귀시키지 않는다
   - `failureCode`/`failureReason`을 `Payment`에 보유할 수 있다(컬럼이 없으면 신규 migration 없이 보유 가능한 범위로 처리 — 아래 Constraints 참조)
 - `PaymentService` 결제 처리에 거절 분기를 추가한다(`016` 단계 순서 확장)
   1. `OrderPaymentReader.getPayableOrder`로 준비 스냅샷 조회·소유권 검증·이벤트 완결성 사전검증(404 존재 은닉, productId 해석 불가/비정상 상태 409) — `016`과 동일. 거절 분기 페이로드에 필요한 member 연락처도 이 단계에서 확보한다
@@ -57,21 +58,24 @@ shop-core
   3. 모의 PG 승인 요청
   4. **승인**: `016` 경로(payments `paid` + `OrderConfirmation.confirmPaid` + `OrderCompletedEvent`) — 변경 없음
   5. **거절**: `payments`를 `failed`로 기록하고 `PaymentFailedEvent`를 발행한다. 주문은 `pending`으로 유지한다(상태 변경·`OrderConfirmation` 호출·`OrderCompletedEvent` 발행 없음)
+     - **거절은 예외로 트랜잭션을 중단시키지 않는다(C1)**. `PaymentService.pay`는 거절을 도메인 정상 결과(`declined` 결과 객체)로 **반환**해 `failed` 기록·`PaymentFailedEvent` Outbox 저장을 **정상 커밋**한다. 402 응답 변환은 커밋 이후 ServiceResponse/Controller 계층에서 수행한다. `@Transactional` 경계 안에서 `BusinessException`(402)을 던지면 RuntimeException 롤백으로 `failed` row·이벤트가 함께 롤백되므로 금지한다
   6. 커밋
 - `PaymentFailedEvent`를 `payment/event`에 `@Externalized("payment-failed")`로 정의·발행한다
   - 페이로드는 `docs/event-catalog.md`의 `PaymentFailedEvent` 스키마를 그대로 따른다
     - `orderId`, `orderNumber`, `memberId`(=주문 `userId`), `memberEmail`, `memberName`, `amount`(결제 시도 금액=주문 `finalAmount`), `currency`(`KRW`), `failureCode`, `failureReason`, `attemptedAt`, 공통 봉투(`eventId`, `occurredAt`)
-    - `memberEmail`/`memberName`은 `016`의 `OrderPaymentReader` 스냅샷(member 연락처 사전 해석 포함) 또는 `member.spi`로 조회한다. 거절 분기도 PG 호출 전(1단계)에 연락처 해석을 완료해 둔다
+    - `memberEmail`/`memberName`은 **`payment` 모듈이 `member.spi`(`MemberDirectory.findContactByUserId`)로 직접 조회한다(Mi1)**. `016`의 `OrderPaymentView` 스냅샷은 연락처를 반환하지 않고 완결성 검증만 하므로, 스냅샷에서 연락처를 꺼내오지 않는다. 거절 분기도 PG 호출 전(1단계)에 `member.spi`로 연락처 해석을 완료해 둔다(완결성 사전검증과 동일 단계)
     - `amount`는 `numeric(12,2)`(BigDecimal) → `long` 변환 규칙을 `016`(P3)과 동일하게 적용한다: 소수부 0만 허용, `BigDecimal.longValueExact()`로 변환, 위반 시 도메인 예외
   - 발행은 `payment` 트랜잭션 안에서 `ApplicationEventPublisher`로 수행한다(같은 트랜잭션 = Outbox 저장)
 - 거절 후 재시도 멱등/일관성을 정의한다
   - `uq_payments_order_id`로 주문당 결제 row는 1건이다. 거절 후 재요청은 동일 row를 `failed`→재승인 시도로 갱신한다(신규 row insert로 unique 위반을 내지 않는다)
+  - **선점 분기에 `failed` 케이스를 추가한다(Ma1)**: `016`의 ready row 선점 단계는 기존 row를 `paid`(멱등 반환)/`ready`(재사용)로만 분기한다. `017`은 여기에 **기존 row가 `failed` → 동일 row 재사용(재승인/재거절 시도)** 분기를 추가한다. 재승인 성공 시 `failed→paid`(Ma1 전이 확장)로 갱신한다
   - 재시도가 승인되면 `016` 승인 경로(`paid` + 주문 확정 + `OrderCompletedEvent`)로 진행한다
   - 재시도가 다시 거절되면 `PaymentFailedEvent`가 다시 발행될 수 있다(각 시도가 독립 이벤트). `eventId`는 시도마다 새로 생성한다(컨슈머 멱등은 `eventId` 기준)
-- REST 거절 응답을 일관 코드로 정의한다
-  - 권장: `402 Payment Required`. `BusinessException` 상태 매핑을 추가하거나 채택 코드를 task/코드 주석에 명시한다
+  - **동시 결제 중 패자 처리에 `failed` 분기를 추가한다(Ma2)**: `016`의 선점 충돌(`DataIntegrityViolationException`) 재조회는 `paid`(멱등 반환)/`ready`(409 `PaymentInProgressException`)만 분기한다. 거절 분기 도입으로 선점 승자가 거절하면 row가 `failed`로 남으므로, 패자의 재조회가 `failed` row를 만나는 케이스를 명시적으로 정의한다: 패자는 동일 `failed` row 재사용 경로(재승인/재거절 시도)로 합류한다(미정의 동작·NPE 금지)
+- REST 거절 응답을 `402 Payment Required` + `ErrorResponse`로 **단일 확정**한다(Ma3)
+  - 거절은 `402 Payment Required`로 응답한다. `PaymentService.pay`가 **커밋한 거절 결과**를 ServiceResponse/Controller 계층에서 402로 매핑한다(C1 — 트랜잭션 안에서 던지지 않는다). 매핑 수단(예: `RestExceptionHandler`의 `BusinessException` 상태 매핑에 402 추가, 또는 거절 결과를 받아 402 `ErrorResponse`를 조립)을 task/코드 주석에 명시한다
   - 응답 본문은 `error-response-rule`의 `ErrorResponse` 포맷을 따른다(내부 정보 비노출). `failureReason`은 사용자 노출 가능한 메시지만 담는다
-  - `PaymentResponse`에 거절 표현 필드(`status=failed`, `failureCode`, `failureReason`)를 노출하는 설계도 허용한다. 단 REST 에러 응답과 정상 응답 본문을 혼용하지 않고 일관되게 한다(채택안을 task/코드에 명시)
+  - 거절을 **200 정상 응답(`PaymentResponse`)으로 표현하지 않는다**. 정상 `PaymentResponse`(200)는 승인/멱등 결과 전용이며, 거절은 항상 402 에러 응답으로 일관 처리한다(거절 표현을 정상 본문과 혼용 금지)
 - View 거절 처리를 추가한다
   - 주문 상세 결제 폼 제출이 거절되면 flashError로 거절 사유를 표시하고 `/orders/{orderId}`로 redirect한다
   - 주문은 `pending`으로 유지되어 결제 폼이 다시 노출된다(재시도 가능)
@@ -89,7 +93,7 @@ shop-core
     - 옵션 A(권장): `failureCode`/`failureReason`은 `payments`에 영속화하지 않고 `PaymentFailedEvent` 페이로드와 REST 응답에만 싣는다(`payments.status=failed`만 영속). 거절 사유 영속이 필요해지면 후속 Task에서 migration으로 컬럼을 추가한다
     - 옵션 B: 신규 migration(`V4`)로 `payment_failures` 보조 테이블 또는 `payments.failure_code`/`failure_reason` 컬럼을 추가한다. 채택 시 `docs/rules/*`(flyway/architecture) 준수
     - 채택안을 plan/코드에 명시한다
-- 결제 거절 분기/`payments failed` 기록/`PaymentFailedEvent` 발행은 하나의 트랜잭션에서 처리한다. 실패 시 부분 반영이 없어야 한다
+- 결제 거절 분기/`payments failed` 기록/`PaymentFailedEvent` 발행은 하나의 트랜잭션에서 **정상 커밋**한다. 거절은 도메인 정상 흐름이므로 트랜잭션을 예외로 롤백시키지 않는다(C1 — 402는 커밋 후 매핑). 시스템 오류로 인한 실패 시에는 부분 반영이 없어야 한다(`failed`/이벤트 원자성)
 - 거절은 도메인 정상 흐름이므로 스택트레이스·내부 PG 응답 원문을 응답·로그에 노출하지 않는다(`error-response-rule` 금지 항목)
 - Controller에서 비즈니스 로직을 작성하지 않는다
 - DTO와 Entity를 분리한다
@@ -132,17 +136,18 @@ shop-core
 | 거절 후 주문 상태 | `pending` 유지 → 결제 폼 재노출(재시도 가능) |
 
 ## API Response Contract
-- 거절 REST 응답: 채택 코드(권장 `402`)로 일관 응답, `ErrorResponse` 포맷
-- `PaymentResponse`에 `status=failed`, `failureCode`, `failureReason`를 표현할 수 있다(채택안 명시)
+- 거절 REST 응답: `402 Payment Required` + `ErrorResponse` 포맷으로 **단일 확정**(Ma3). `PaymentService.pay` 커밋 후 ServiceResponse/Controller에서 402로 매핑(C1)
+- 거절을 200 `PaymentResponse`로 표현하지 않는다. `PaymentResponse`(200)는 승인/멱등 전용이다
 - 내부 PG 응답 원문·스택트레이스는 응답에 포함하지 않는다
 
 ## Acceptance Criteria
 - 모의 PG 거절 시 `payments`가 `failed`로 기록되고 주문은 `pending`으로 유지된다
 - 모의 PG 거절 시 `PaymentFailedEvent`가 같은 트랜잭션의 Outbox(`event_publication`)에 저장되고, 페이로드가 `event-catalog`의 `PaymentFailedEvent` 스키마(`memberEmail`/`memberName`/`failureCode`/`failureReason`/`amount`/`currency`/`attemptedAt`)를 만족한다
 - 거절 시 `OrderCompletedEvent`는 발행되지 않고 주문 status는 변경되지 않는다
-- 거절된 결제를 재시도해 승인되면 `paid`로 전이되고 주문이 확정되며 `OrderCompletedEvent`가 발행된다(`016` 경로)
+- 거절된 결제를 재시도해 승인되면 동일 row가 `failed→paid`로 전이되고(Ma1) 주문이 확정되며 `OrderCompletedEvent`가 발행된다(`016` 경로)
 - 거절 후 재요청 시 `payments` row가 1건을 유지한다(`uq_payments_order_id` 위반 없음)
-- `REST POST /api/v1/orders/{orderId}/payment` 거절은 채택 코드(권장 402)로 일관 응답하고 내부 정보를 노출하지 않는다
+- 동시 결제 중 선점 승자가 거절하면 패자는 `failed` row 재사용 경로로 처리되고 `payments` row가 1건을 유지한다(Ma2)
+- 거절 트랜잭션은 예외 롤백 없이 `failed`/이벤트가 커밋되며(C1), `REST POST /api/v1/orders/{orderId}/payment` 거절은 커밋 후 `402`로 일관 응답하고 내부 정보를 노출하지 않는다
 - View 결제 폼 제출 거절 시 flashError가 표시되고 `/orders/{orderId}`로 redirect되며 주문은 `pending`으로 유지된다
 - 거절 분기 트랜잭션이 부분 반영되지 않는다(`payments`/이벤트 원자성)
 - `PaymentFailedEvent`는 `payment` 모듈이 발행한다
@@ -154,8 +159,10 @@ shop-core
 - `./gradlew test`
 - 권장 단위 테스트(payment)
   - 모의 PG 거절(port mock) 시 `payments failed` 기록 + `PaymentFailedEvent` 발행 + order 확정 미호출 + `OrderCompletedEvent` 미발행
+  - 거절 시 `PaymentService.pay`가 예외를 던지지 않고 거절 결과를 반환하며 `failed`/이벤트가 커밋된다(트랜잭션 롤백 없음, C1)
   - `Payment.markFailed`가 `paid`에서 거절로 역전이 금지
-  - 거절 후 재시도 승인 시 `paid` 전이 + 주문 확정 경로 진입
+  - `Payment.markPaid`가 `failed→paid` 전이를 허용(Ma1)하고 `ready→paid`도 회귀 없이 동작
+  - 거절 후 재시도 승인 시 `failed→paid` 전이 + 주문 확정 경로 진입(Ma1)
   - 거절 후 재요청 시 동일 row 갱신(신규 row insert 없음)
   - `PaymentFailedEvent` 페이로드 필드 매핑(memberEmail/memberName/failureCode/failureReason/amount/currency/attemptedAt) 검증
 - 권장 모의 PG 테스트
@@ -163,10 +170,11 @@ shop-core
 - 권장 통합 테스트(Outbox 발행, Testcontainers PostgreSQL + Modulith)
   - 거절 결제 커밋 시 `event_publication`에 `PaymentFailedEvent`가 1건 저장되고 payload가 스키마를 만족한다
   - 거절 분기 시 주문 status·`OrderCompletedEvent`가 변하지 않는다
-  - 거절 트랜잭션 롤백 시 `payments`/`event_publication` 부분 반영 없음
+  - 동시 결제 2건 중 승자 거절 시 패자가 `failed` row 재사용 경로로 처리되고 `payments` row가 1건을 유지한다(Ma2)
+  - 시스템 오류로 거절 트랜잭션 롤백 시 `payments`/`event_publication` 부분 반영 없음(거절 자체는 정상 커밋, C1)
   - 테스트 기본 프로파일의 자동설정 제외와 충돌하지 않게 별도 통합 프로파일에서 실행한다
 - 권장 REST/Security 테스트
-  - `POST /api/v1/orders/{orderId}/payment` 거절 시 채택 코드(권장 402)
+  - `POST /api/v1/orders/{orderId}/payment` 거절 시 `402`(커밋 후 매핑, C1) — 거절 결과가 예외 롤백 없이 `failed`/이벤트로 커밋됨을 함께 검증
   - 거절 응답에 내부 PG 원문·스택트레이스 미포함
   - 거절 후 재시도 승인 200 + `paid`
 - 권장 View 테스트
