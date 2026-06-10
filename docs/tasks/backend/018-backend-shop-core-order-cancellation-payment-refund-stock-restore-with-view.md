@@ -8,7 +8,9 @@ shop-core
 ## Goal
 `015`(주문 생성)·`016`(결제 승인)·`017`(결제 거절) 위에 **주문 취소(cancel)** 흐름을 추가한다. 소비자가 자신의 주문을 취소하면:
 - **미결제 주문**(`pending` + 결제 row 없음/`ready`/`failed`) → 주문 `cancelled` + **재고 복원** + 결제 row가 있으면 `cancelled`로 전이. PG 환불 없음(청구된 적 없음).
-- **결제 완료 주문**(`paid`) → **모의 PG 환불** + 결제 `refunded` + 주문 `cancelled` + **재고 복원** + `OrderCancelledEvent` 발행.
+- **결제 완료 주문**(`paid`) → **모의 PG 환불** + 결제 `refunded` + 주문 `refunded` + **재고 복원** + `OrderCancelledEvent` 발행.
+
+> 종결 상태 규칙(#3): **환불을 동반한 결제완료 취소 = 주문 `refunded`**, **미결제 취소 = 주문 `cancelled`**. payment(`cancelled`/`refunded`)와 의미를 정렬한다.
 
 이미 이행 단계에 들어간 주문(`preparing`/`shipping`/`delivered`)과 종결 상태(`cancelled`/`refunded`)는 취소를 거부한다(409). REST·View에서 취소 결과를 일관되게 응답·표시한다.
 
@@ -58,24 +60,26 @@ shop-core
 - **Entity 상태 전이(Setter 금지·의도 메서드)**
   - `Payment.markCancelled()`: `ready`/`failed`→`cancelled`(미결제 취소). `paid`→`cancelled` 금지(환불을 거쳐야 함).
   - `Payment.markRefunded(pgRefundId)`: `paid`→`refunded`(환불 완료). 그 외 상태에서 호출 시 `IllegalStateException`.
-  - `Order.markCancelled()`: `pending`/`paid`→`cancelled`. `preparing`/`shipping`/`delivered`/`cancelled`/`refunded`에서 호출 금지(상위에서 차단; 방어적으로 도메인 예외).
+  - `Order.markCancelled()`: `pending`→`cancelled`(미결제 취소). 그 외 상태 호출 금지(방어적 도메인 예외).
+  - `Order.markRefunded()`: `paid`→`refunded`(환불 동반 취소, #3). 그 외 상태 호출 금지. `preparing`/`shipping`/`delivered`/이미 종결 상태는 상위에서 차단.
   - 멱등: 이미 종결 상태면 전이 메서드가 멱등 처리하거나 상위에서 멱등 분기.
 - **취소 오케스트레이션(payment 모듈 소유)** — 예: `PaymentService.cancel(userId, orderId)`(`@Transactional`)
-  1. 주문 스냅샷 조회·**소유권 검증(404 존재 은닉)** — `order.spi`(`getOrderSnapshot` 재사용 또는 취소 전용 reader). orders row를 **비관락**해 동시 결제와 직렬화한다.
+  1. **취소 전용 locked reader**(신규 `order.spi`)로 주문 조회 — **orders row `PESSIMISTIC_WRITE` 잠금** + 소유권 검증(404 존재 은닉). **환불 결정(②③) 전에** 주문을 잠가 동시 결제(`confirmPaid`)와 직렬화한다(무락 `getOrderSnapshot` 재사용 금지 — 환불/확정 race 방지, #4). 이 락은 같은 트랜잭션의 ④까지 유지된다.
   2. 상태 판정:
-     - `paid` → ④ 환불 경로. `pending` → ⑤ 미결제 취소 경로. 그 외(`preparing`/`shipping`/`delivered`) → `OrderCancellationConflictException`(409). 이미 `cancelled`/`refunded` → **멱등 반환**(중복 환불·중복 복원 금지).
+     - `paid` → ④ 환불 경로. `pending` → ⑤ 미결제 취소 경로. 그 외(`preparing`/`shipping`/`delivered`) → `OrderCancellationConflictException`(409, **부작용 발생 전 판정이라 던져도 무방**). 이미 `cancelled`/`refunded` → **멱등 반환**(중복 환불·중복 복원 금지).
   3. (paid) `PaymentGatewayPort.refund(...)` 호출 → 성공 시 `Payment.markRefunded`. (pending) 결제 row가 있으면 `Payment.markCancelled`, 없으면 결제 처리 없음.
-  4. `order.spi` **신규 취소 포트**로 위임: 주문 `markCancelled` + **재고 복원**(각 order_item variant를 오름차순 `inventory.increase`, 삭제된 variant는 skip+log) + **`OrderCancelledEvent` 발행**(order 트랜잭션 = Outbox). 환불 정보를 페이로드에 포함.
-  5. **취소·환불을 정상 커밋**하고 도메인 결과를 반환한다(C1 패턴). HTTP 표현(200/실패 매핑)은 커밋 후 ServiceResponse/Facade 계층에서 수행한다.
-- **신규 order.spi 포트** — 예: `OrderCancellation.cancel(long orderId, long requesterUserId, RefundInfo refundInfo)`
-  - orders row 비관락 + 소유권 재검증(404) + 상태 재검증(409) + `Order.markCancelled` + 재고 복원(inventory.spi) + `OrderCancelledEvent` 구성·발행. `OrderConfirmation`과 대칭. 반환은 scalar record(Entity 미노출).
-  - 결과 타입은 `017` revision에서 도입한 `Outcome` 패턴을 따라 `CANCELLED`/`ALREADY_CANCELLED`/`REJECTED`를 값으로 표현하는 것을 권장(미래 분리 대비 이음매 일관성).
+  4. `order.spi` **신규 취소 포트**로 위임: 종결 전이(**환불 동반=`Order.markRefunded`(→`refunded`) / 미결제=`Order.markCancelled`(→`cancelled`)**, #3) + **재고 복원**(각 order_item variant를 오름차순 `inventory.increase`, 삭제된 variant는 skip+log) + **`OrderCancelledEvent` 발행**(order 트랜잭션 = Outbox). 환불 정보를 페이로드에 포함.
+  5. 성공 시 취소·환불·복원·이벤트가 **한 트랜잭션으로 원자 커밋**되고 **`200`** 으로 응답한다(#2 — 017의 C1은 \"failed+이벤트를 영속하며 402로 응답\"이라는 영속+에러상태 충돌 때문이었으나, 018은 성공=200·거부=부작용 전 판정이라 해당 시나리오가 없다 → C1식 \"결과 반환 후 커밋 후 매핑\" 간접화 불필요).
+- **신규 order.spi 포트(2종)**
+  - **취소 전용 locked reader**(예: `OrderPaymentReader.getOrderForCancel(orderId, userId)` 또는 신규 reader): orders row `PESSIMISTIC_WRITE` 잠금 + 소유권 404 + 스냅샷 반환 — **환불 결정 전 호출**(#4).
+  - **`OrderCancellation.cancel(long orderId, long requesterUserId, RefundInfo refundInfo)`**: (이미 잠긴) orders row **권위 재검증(404/409)** + 종결 전이(`markCancelled`/`markRefunded`) + 재고 복원(inventory.spi) + `OrderCancelledEvent` 구성·발행. `OrderConfirmation`과 대칭. 반환은 scalar record(Entity 미노출).
+  - 결과 타입은 `017` revision에서 도입한 `Outcome` 패턴을 따라 `CANCELLED`/`ALREADY_CANCELLED`/`REJECTED`를 값으로 표현하는 것을 권장(미래 분리 대비 이음매 일관성). (CANCELLED는 주문 종결=`cancelled`/`refunded` 양쪽을 포괄하며, 재무 구분은 `refunded` 플래그·주문 상태로 표현.)
 - **`OrderCancelledEvent` 정의·발행(order 모듈 소유)** — `order/event`에 `@Externalized("order-cancelled")` record
   - 페이로드(event-catalog SSOT 신규): 공통 봉투(`eventId`, `occurredAt`) + `orderId`/`orderNumber`/`memberId`/`memberEmail`/`memberName`/`items[]`(productId·productName·quantity)/`refunded`(bool)/`refundedAmount`(long, 환불 시)/`currency`/`cancelledAt`.
   - `memberEmail`/`memberName`은 `member.spi`로 해석(자족 페이로드). `amount` long 변환은 `016`(P3, `longValueExact`) 규칙 동일.
   - 발행은 order 트랜잭션 안에서 `ApplicationEventPublisher`로(같은 트랜잭션 = Outbox 저장 → 004 외부화).
 - **재고 복원 일관성·멱등**
-  - 취소는 주문당 1회만 재고를 복원한다(이미 `cancelled`/`refunded`면 멱등 반환으로 **이중 복원 금지**). orders row 비관락으로 동시 취소·결제와 직렬화.
+  - 취소는 주문당 1회만 재고를 복원한다(이미 `cancelled`/`refunded`면 멱등 반환으로 **이중 복원 금지**). 1단계 locked reader가 잡은 orders row 락으로 동시 취소·결제와 직렬화(#4).
   - 삭제된 variant(order_item.variant_id == null)는 복원 대상에서 제외하고 로깅(재고 복원 best-effort, 데이터 무결성 유지).
 - **View**
   - 주문 상세(`templates/order/detail.html`)에 **"주문 취소" 버튼/폼**을 취소 가능 상태(`pending`/`paid`)에서만 노출. 취소 후 상태 표시(`취소됨`/`환불됨`) 추가.
@@ -85,8 +89,9 @@ shop-core
 - **신규 migration 없이** 처리한다(상태값 `cancelled`/`refunded`는 기존 CHECK에 포함, `VariantStock`/`Order`/`Payment` 컬럼 추가 없음). 환불 사유/이력 영속이 필요하면 후속 Task(`V_` migration).
 - **모듈 순환 의존 금지**: `order → payment.spi`를 만들지 않는다. 취소 오케스트레이션은 payment가 소유하고 `payment → order.spi`(기존 방향)만 추가한다. `ModularityTests`·구조 테스트 그린 유지.
 - **이벤트 계약 변경은 문서 먼저**: `OrderCancelledEvent`를 `docs/event-catalog.md` + `docs/architecture.md` §5에 먼저 추가한 뒤 코드 작성(event-contract-rule).
-- **취소·환불은 트랜잭션 정상 커밋(C1 패턴)**: 도메인 결과로 반환하고 HTTP 표현은 커밋 후 매핑. 트랜잭션 안에서 상태코드용 예외를 던져 재고 복원/환불/이벤트를 롤백시키지 않는다.
-- **모의 환불은 결정적·항상 성공**(무작위 금지). 실 PG 환불(부분 환불·환불 실패 재시도)은 범위 밖.
+- **성공은 원자 커밋 + 200, 거부는 부작용 전 판정(017식 C1 비적용 — #2)**: 취소/환불 성공은 한 트랜잭션으로 원자 커밋되고 `200`으로 응답한다. 017의 C1(\"failed+이벤트를 영속하며 402로 응답\")처럼 \"영속+에러상태\"가 충돌하는 시나리오가 018엔 없으므로 C1식 \"결과 반환 후 커밋 후 매핑\" 간접화를 적용하지 않는다. 거부(이행 단계 409)는 **부작용 발생 전에 판정**해 트랜잭션 안에서 던져도 무방하다(롤백할 부작용 없음).
+- **모의 환불은 결정적·항상 성공**(무작위 금지, 부작용 없음). 실 PG 환불(부분 환불·환불 실패 재시도)은 범위 밖.
+- **실 PG 환불 비가역성 주의(#5)**: 본 Task의 mock refund는 트랜잭션 안에서 호출해도 부작용이 없어 무해하나, 실 PG 환불은 \"환불 성공 후 커밋 전 롤백 = 실제 환불 비가역\"이라 016 `authorize`(실 청구)와 동일한 분산 문제를 가진다 → 실 PG 도입 시 멱등키 + 정산(reconciliation)이 필요하다(분리/실 PG Task).
 - **전체 주문 취소만**: 부분 취소(item 단위), 반품/교환(배송 후 return), 환불 정산/수수료는 범위 밖.
 - `preparing`/`shipping`/`delivered` 취소(배송 중단·회수)는 범위 밖(409로 거부). 이행 단계 전이는 별도 배송 Task에서 다룬다.
 - 환불·재고 복원은 **각각 1회만**(멱등). 이미 `cancelled`/`refunded` 주문 재취소는 부작용 없이 멱등 반환.
@@ -96,18 +101,18 @@ shop-core
 > 정확한 경로는 plan에서 확정. 아래는 신규/수정 범위 가이드.
 - (신규) `payment/spi/PaymentGatewayPort.refund(...)` + `payment/service/MockPaymentGateway`(refund 구현)
 - (신규) `inventory/spi/InventoryStockPort.increase(...)` + `inventory` 구현체(VariantStock 비관락 증가)
-- (신규) `order/spi/OrderCancellation`(+ Result/Outcome) + `order/service/OrderCancellationImpl`
+- (신규) `order/spi/OrderCancellation`(+ Result/Outcome) + **취소 전용 locked reader(`order.spi`, orders row PESSIMISTIC_WRITE, #4)** + `order/service` 구현
 - (신규) `order/event/OrderCancelledEvent`(`@Externalized("order-cancelled")`)
 - (신규) `common/exception/OrderCancellationConflictException`(409) — 필요 시
 - (수정) `payment/domain/Payment`(markCancelled/markRefunded), `order/domain/Order`(markCancelled)
 - (수정) `payment/service/PaymentService`(cancel 오케스트레이션) + ServiceResponse/Facade(취소 결과 → 200/예외 매핑)
-- (수정) `payment/controller` 또는 `order/controller`(`POST /api/v1/orders/{orderId}/cancel`) — web→domain.spi 단방향 유지
-- (수정) `web/order/OrderViewController`(`POST /orders/{orderId}/cancel`) + `templates/order/detail.html`(취소 버튼/상태)
+- (수정) `payment/controller`(**`PaymentRestController`에 `POST /api/v1/orders/{orderId}/cancel` 추가**) — REST 취소는 **payment 모듈 컨트롤러**에 둔다(016/017 결제 엔드포인트가 URL `/orders/..`지만 PaymentRestController에 있는 선례). `order/controller`(order 도메인 모듈)에 두면 `order → payment` **순환**이 되므로 금지(#1).
+- (수정) `web/order/OrderViewController`(`POST /orders/{orderId}/cancel`, **web→domain.spi 단방향**) + `templates/order/detail.html`(취소 버튼/상태)
 - (수정) `security/SecurityConfig`(cancel 엔드포인트 권한)
 - (문서) `docs/event-catalog.md`(OrderCancelledEvent) + `docs/architecture.md` §5 토픽 표
 
 ## Module Boundary Contract
-- `payment → order.spi`(OrderCancellation, 기존 OrderPaymentReader/getOrderSnapshot) — **기존 방향, 순환 없음.**
+- `payment → order.spi`(OrderCancellation + 취소 전용 locked reader, 기존 OrderPaymentReader) — **기존 방향, 순환 없음.** REST 취소 컨트롤러도 **payment 모듈**에 둔다(order/controller에 두면 순환, #1).
 - `order → inventory.spi`(increase) — 기존 방향.
 - `order → member.spi`(연락처) / `order → product.spi`(productId 해석) — 기존.
 - `OrderCancelledEvent`는 **order 모듈 발행 소유**(`OrderCompletedEvent`와 동일 위치 철학).
@@ -125,11 +130,11 @@ shop-core
 
 ## Acceptance Criteria
 - 미결제 주문(`pending`, 결제 row 없음/`ready`/`failed`) 취소 → 주문 `cancelled` + **재고 복원** + (결제 row 있으면) `cancelled`. PG 환불 호출 없음.
-- 결제 완료 주문(`paid`) 취소 → 모의 환불 성공 + 결제 `refunded` + 주문 `cancelled` + **재고 복원** + `OrderCancelledEvent`(환불정보 포함) Outbox 저장.
+- 결제 완료 주문(`paid`) 취소 → 모의 환불 성공 + 결제 `refunded` + 주문 `refunded`(#3) + **재고 복원** + `OrderCancelledEvent`(환불정보 포함) Outbox 저장.
 - `preparing`/`shipping`/`delivered` 취소 시도 → `409`, 상태·재고 불변, 이벤트 미발행.
 - 이미 `cancelled`/`refunded` 주문 재취소 → **멱등 200**, **재고 이중 복원 없음**, 환불 이중 호출 없음.
 - 타인 주문 취소 → `404` 존재 은닉.
-- 취소 트랜잭션은 예외 롤백 없이 정상 커밋(C1): 재고 복원·환불·이벤트가 부분 반영 없이 원자 커밋. 시스템 오류 시 전체 롤백.
+- 취소/환불 성공은 재고 복원·환불·이벤트가 부분 반영 없이 **원자 커밋**되고 `200`. 거부(이행 단계)는 부작용 발생 전 판정해 `409`. 시스템 오류 시 전체 롤백(부분 반영 없음).
 - 삭제된 variant(order_item.variant_id null) 포함 주문 취소 → 해당 항목은 복원 skip+log, 나머지 정상 복원, 취소 성공.
 - `OrderCancelledEvent` 페이로드 자족(memberEmail/memberName/items/refunded/refundedAmount/currency/cancelledAt) — notification 역조회 불필요.
 - View: 취소 가능 주문에 취소 버튼 노출, 취소 후 `cancelled`/`refunded` 표시·폼 미노출. 취소 불가 시 flashError.
@@ -137,8 +142,8 @@ shop-core
 - `ModularityTests`/구조 테스트 통과(payment↔order 순환 없음). `015`/`016`/`017` 회귀 없음.
 
 ## Test
-- 단위: `Payment.markCancelled/markRefunded`·`Order.markCancelled` 전이(허용/금지/멱등). `MockPaymentGateway.refund` 결정성(항상 성공). `InventoryStock` increase 비관락.
-- 단위(Mockito): `PaymentService.cancel` 분기 — paid→환불+refunded, pending→cancelled, 이행단계→409, 멱등 재취소(복원·환불 1회), 소유권 404.
+- 단위: `Payment.markCancelled/markRefunded`·`Order.markCancelled/markRefunded` 전이(허용/금지/멱등, #3). `MockPaymentGateway.refund` 결정성(항상 성공). `InventoryStock` increase 비관락.
+- 단위(Mockito): `PaymentService.cancel` 분기 — paid→환불+결제 refunded+주문 refunded, pending→주문 cancelled, 이행단계→409, 멱등 재취소(복원·환불 1회), 소유권 404. 취소 전 locked reader가 환불보다 먼저 호출되는지(#4).
 - 통합(Testcontainers): 취소 커밋 시 `OrderCancelledEvent` `event_publication` 1건 + payload 스키마 + 재고 복원(stock 증가) + 주문/결제 상태 전이 원자성. 멱등 재취소 시 재고 불변·이벤트 추가 없음. 시스템 오류 강제 시 부분 반영 없음.
 - 동시성(Testcontainers): 동시 취소 2건 → 1건만 복원/환불, row 정합(멱등). 취소 vs 결제 동시 → orders row 락으로 직렬화, 모순 상태 없음.
 - REST/Security: `POST /api/v1/orders/{id}/cancel` 200/409/404, 내부정보 비노출, ROLE_CONSUMER 권한.

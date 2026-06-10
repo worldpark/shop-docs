@@ -88,6 +88,45 @@
 }
 ```
 
+## OrderCancelledEvent (topic: `order-cancelled`)
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `eventId` | UUID | ✓ | 공통 봉투 |
+| `occurredAt` | ISO-8601 | ✓ | 공통 봉투 |
+| `orderId` | long | ✓ | 주문 PK |
+| `orderNumber` | string | ✓ | 사용자 노출용 주문번호 |
+| `memberId` | long | ✓ | 회원 PK |
+| `memberEmail` | string | ✓ | 알림 수신 이메일 |
+| `memberName` | string | ✓ | 수신자 이름 |
+| `items` | array | ✓ | 취소 항목 목록 (삭제된 variant 제외) |
+| `items[].productId` | long | ✓ | 상품 PK |
+| `items[].productName` | string | ✓ | 상품명(주문 시점 스냅샷) |
+| `items[].quantity` | int | ✓ | 수량 |
+| `refunded` | boolean | ✓ | 환불 여부 (결제완료 취소=true, 미결제 취소=false) |
+| `refundedAmount` | long | ✓ | 환불 금액(최소 화폐 단위, KRW=원). 미결제 취소=0 |
+| `currency` | string | ✓ | 통화 코드(예: `KRW`) |
+| `cancelledAt` | ISO-8601 | ✓ | 취소 처리 시각 |
+
+```json
+{
+  "eventId": "a1b2c3d4-...",
+  "occurredAt": "2026-06-10T10:00:00Z",
+  "orderId": 1024,
+  "orderNumber": "ORD-20260610-001024",
+  "memberId": 77,
+  "memberEmail": "buyer@example.com",
+  "memberName": "김철수",
+  "items": [
+    { "productId": 5, "productName": "무선 키보드", "quantity": 2 }
+  ],
+  "refunded": true,
+  "refundedAmount": 78000,
+  "currency": "KRW",
+  "cancelledAt": "2026-06-10T10:00:00Z"
+}
+```
+
 ## ShippingStartedEvent (topic: `shipping-started`)
 
 | 필드 | 타입 | 필수 | 설명 |
