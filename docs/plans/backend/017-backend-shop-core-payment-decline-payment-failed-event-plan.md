@@ -80,26 +80,28 @@
 
 016 흐름의 **⑤ PG 승인** 직후 분기를 다음으로 확장한다(①~④, ⑥~⑧은 016 그대로).
 
-- ⑤ `PaymentGatewayPort.authorize(...)` 호출(선점 1건만 도달).
+> **연락처 사전 해석(Mi1 · 모순4 후자):** `member.spi.MemberDirectory.findContactByUserId(snapshot.userId())`를 **PG 호출(⑤) 전**(getPayableOrder 완결성 사전검증 직후)에 **1회 해석해 지역 변수로 보관**한다. ⑤-B 거절 분기는 이 보관 값을 **재사용**하며 `member.spi`를 **재조회하지 않는다**. 이로써 (a) 연락처 해석 실패는 **항상 PG 호출 전**에 드러나 `PaymentEventResolutionException`(409)로 매핑되고(§4 에러표), (b) 거절 커밋 구간(⑤-B, PG 호출 후)에는 **외부 조회가 없어** 거절은 **항상 정상 커밋**된다(C1 — 트랜잭션 후반 조회 실패로 인한 거절 유실을 원천 차단). 승인 경로(⑤-A)는 이 값을 사용하지 않지만, 거절 여부는 PG 호출 전에 알 수 없으므로 사전 해석한다(member.spi 1회 조회 비용 — 정합성 > 미세 최적화).
+
+- ⑤ `PaymentGatewayPort.authorize(...)` 호출(**동시 in-flight 중 1건만 도달** — 선점 승자만. 패자가 PG에 도달하는 경우는 승자 커밋 후 `failed` row를 재조회·재사용하는 **직렬 경로**뿐이다, Ma2).
 - **⑤-A 승인(`approved`)**: 016 경로 — ⑥ `markPaid` → ⑦ `OrderConfirmation.confirmPaid`(주문 확정 + `OrderCompletedEvent`) → ⑧ 커밋. **무변경.**
 - **⑤-B 거절(`!approved`)** (신규):
   1. 선점한 `ready` row를 `markFailed(authResult.failureCode(), authResult.failureReason())` → `failed` 전이.
-  2. `member.spi.MemberDirectory.findContactByUserId(snapshot.userId())`로 연락처 조회(Mi1). (016 완결성 사전검증 1단계에서 이미 해석 가능함이 보장됨 — 여기서 실제 값 확보.)
-  3. `PaymentFailedEvent` 구성: `orderId`/`orderNumber`/`memberId`(=`snapshot.userId()`)/`memberEmail`/`memberName`/`amount`(`finalAmount` → `longValueExact`, P3)/`currency`("KRW")/`failureCode`/`failureReason`/`attemptedAt`(=`Instant.now()`) + 공통 봉투(`eventId`=`UUID.randomUUID()`, `occurredAt`).
+  2. **사전 해석해 둔 연락처(지역 변수, PG 호출 전 1회 조회)를 사용**(Mi1 · 모순4 후자) — ⑤-B에서 `member.spi`를 **재조회하지 않는다**(거절 커밋 구간에 외부 조회 없음 → C1 보장). 사전 해석은 016 완결성 사전검증과 같은 시점(PG 호출 전)에 수행되어 "거절 후 연락처 누락"이 발생할 수 없다.
+  3. `PaymentFailedEvent` 구성: `orderId`/`orderNumber`/`memberId`(=`snapshot.userId()`)/`memberEmail`/`memberName`/`amount`(`finalAmount` → `longValueExact`, P3)/`currency`(**`snapshot.currency()`** — 016 승인 경로·`PaymentAuthorizationRequest`와 동일 출처, 하드코딩 금지)/`failureCode`/`failureReason`/`attemptedAt`(=`Instant.now()`) + 공통 봉투(`eventId`=`UUID.randomUUID()`, `occurredAt`).
   4. `ApplicationEventPublisher.publishEvent(paymentFailedEvent)`(payment 트랜잭션 안 = Outbox 저장).
   5. **거절 결과를 반환**(`OrderConfirmation` 미호출, 주문 status 변경 없음, `OrderCompletedEvent` 미발행).
   - ⑧ 커밋: `payments.status=failed` UPDATE + `event_publication` 1행(INCOMPLETE)이 원자 커밋.
 
-> 거절 분기는 **PG 호출 전 직렬화(④ ready 선점)**의 수혜를 그대로 받는다 — 선점 1건만 PG에 도달하므로 거절도 단일 row에서만 일어난다. `OrderConfirmation`(orders row 비관락)은 거절 분기에서 호출되지 않으므로, 거절 경로는 `payments` row만 갱신하고 orders row를 잠그지 않는다(주문 `pending` 유지를 락 없이 보장).
+> 거절 분기는 **PG 호출 전 직렬화(④ ready 선점)**의 수혜를 그대로 받는다 — **동시 경합에서는 선점 승자 1건만 PG에 도달**하고(패자는 ④ uq 위반으로 차단), 패자가 PG에 도달하는 유일한 경우는 **승자가 이미 커밋한 뒤** 패자가 `failed` row를 재조회·재사용하는 **직렬 경로**다(Ma2 — 동시 동시도달 아님, 시간상 분리된 별개 시도). 따라서 "한 주문에 대한 **동시** PG 호출은 1건"이라는 불변식은 유지되며, 거절도 단일 row에서만 일어난다. `OrderConfirmation`(orders row 비관락)은 거절 분기에서 호출되지 않으므로, 거절 경로는 `payments` row만 갱신하고 orders row를 잠그지 않는다(주문 `pending` 유지를 락 없이 보장). (구현 시 016 코드 주석 `PaymentService.java`의 "PG 단일 호출 보장"도 "동시 PG 호출 1건"으로 정밀화한다.)
 
 ### 1.4 Entity 상태 전이 확장 — markFailed 신규 + markPaid 확장 (Ma1)
 
 `Payment`에 다음을 추가/확장한다(Setter 금지·의도 메서드 유지).
 
 - **`markFailed(String failureCode, String failureReason)`** (신규):
-  - 허용 전이: `ready→failed`, `failed→failed`(재시도 거절 — 멱등적으로 사유 갱신).
+  - 허용 전이: `ready→failed`, `failed→failed`(재거절 — 이미 `failed`이므로 **상태 무변경 no-op**, 멱등). 옵션 A(사유 미영속)이므로 **"사유 갱신"은 일어나지 않는다** — 갱신할 사유 컬럼이 없고, 사유는 호출부가 이벤트/응답에 싣는다.
   - 금지 전이: `paid→failed` → `IllegalStateException`(승인된 결제를 거절로 역전이 불가).
-  - `failureCode`/`failureReason`은 **옵션 A로 Entity에 영속하지 않는다**(전용 컬럼 없음 — 1.7 참조). `markFailed`는 `status="failed"`만 전이하고, `failureCode`/`failureReason`은 인자로 받아 **호출부(PaymentService)가 이벤트 페이로드·반환 결과에 직접 싣는다**. (영속이 필요해지면 후속 Task migration — 옵션 B.) → `markFailed` 시그니처는 사유를 받지만 Entity 필드에 저장하지 않고 전이 의도만 표현한다.
+  - `failureCode`/`failureReason`은 **옵션 A로 Entity에 영속하지 않는다**(전용 컬럼 없음 — 1.7 참조). `markFailed`는 `status` 전이(`ready→failed`) 또는 `failed` 유지(`failed→failed` no-op)만 수행하고, **사유 인자는 현재 메서드 본문에서 사용하지 않는다**(상태 전이 외 부작용 없음). 사유는 **호출부(PaymentService)가 이벤트 페이로드·반환 결과에 직접 싣는다**. → **인자를 받되 미사용인 것은 의도적 설계**다: 후속 옵션 B(사유 영속) 도입 시 호출부·시그니처 변경 없이 `markFailed` 본문에 `this.failureCode=...` 한 줄만 추가하면 되도록 시그니처를 미리 고정한 것이다(영속이 필요해지면 후속 Task migration — 옵션 B). javadoc에 **"인자 현재 미영속·미사용(옵션 A), 전이 의도/옵션 B 대비 용도"** 를 명시한다.
 - **`markPaid` 확장(Ma1)**: 현재 `ready→paid` + `paid` 멱등. **`failed→paid` 전이를 추가 허용**(거절 후 재시도 승인). 즉 `if (paid) return;`(멱등) → `if (!(ready || failed)) throw;` → `paid` 전이. **`ready→paid`(016 happy path)는 회귀 없이 유지**(테스트로 보장).
 
 **이유**: 상태 머신을 Entity 안에 의도 메서드로 가두어, "거절 → 재시도 승인"이라는 합법 경로(`failed→paid`)와 불법 경로(`paid→failed`)를 도메인이 강제한다. 016 승인 경로는 `ready→paid`로 그대로 통과.
@@ -119,7 +121,7 @@
 - `PaymentFailedEvent`를 **`payment/event`**에 `@org.springframework.modulith.events.Externalized("payment-failed")` record로 정의하고, **payment 모듈(`PaymentService`)이 `ApplicationEventPublisher`로 발행**한다. (016 `OrderCompletedEvent`는 order 모듈 소유 — 발행 소유권이 모듈별로 분리됨. `PaymentFailedEvent`는 결제 실패이므로 payment 소유, package-structure-rule.)
 - 페이로드는 `docs/event-catalog.md`의 `PaymentFailedEvent` 스키마를 그대로 따른다(계약 무변경): 공통 봉투(`eventId`, `occurredAt`) + `orderId`/`orderNumber`/`memberId`/`memberEmail`/`memberName`/`amount`(long)/`currency`/`failureCode`/`failureReason`/`attemptedAt`.
 - `amount`는 `finalAmount`(BigDecimal `numeric(12,2)`) → `long` 변환을 016 P3와 동일 규칙(`BigDecimal.longValueExact()`, 소수부 0만 허용, 위반 시 `AmountConversionException`(500))으로 수행한다. 변환 헬퍼는 payment 내부 private 메서드(`PaymentService` 또는 이벤트 팩토리)로 둔다.
-- `memberEmail`/`memberName`은 **payment가 `member.spi.MemberDirectory.findContactByUserId`로 직접 조회**(Mi1) — `OrderPaymentView`/`OrderSnapshotView`는 연락처를 반환하지 않으므로 스냅샷에서 꺼내지 않는다.
+- `memberEmail`/`memberName`은 **payment가 `member.spi.MemberDirectory.findContactByUserId`로 직접 조회**(Mi1) — `OrderPaymentView`/`OrderSnapshotView`는 연락처를 반환하지 않으므로 스냅샷에서 꺼내지 않는다. 조회는 **PG 호출 전 1회**만 수행해 지역 변수로 보관하고 ⑤-B가 재사용한다(모순4 후자 — 거절 커밋 구간에서 외부 조회 제거 → C1).
 - 발행은 `payment` 트랜잭션 안에서 수행해 `event_publication`(INCOMPLETE) Outbox 저장 → 커밋 후 `spring-modulith-events-kafka`가 외부화. 004 메커니즘 재사용(build.gradle/application.yml 변경 불필요).
 
 ### 1.7 거절 사유 영속 정책 — 옵션 A 채택 (신규 migration 없음)
@@ -137,8 +139,11 @@
 
 ### 1.9 결정적 거절 규칙 (무작위 금지)
 
-- `MockPaymentGateway`에 **결정적 거절 규칙 한 가지**를 문서화·구현한다(무작위 금지 — 단위 테스트 재현성). 데모 규칙(택1, 코드 주석·plan 명시):
-  - **채택: 금액 임계 기반 결정 규칙** — 예) `amount`가 특정 임계값 이상(예: `1,000,000원` 초과)이면 `declined("LIMIT_EXCEEDED", "한도 초과로 결제가 거절되었습니다.")`, 그 외 `approved(...)`. (또는 `method == "mock-decline"`이면 거절.) 동일 입력 → 동일 결과를 보장한다.
+- `MockPaymentGateway`에 **결정적 거절 규칙**을 문서화·구현한다(무작위 금지 — 단위 테스트 재현성). 동일 입력 → 동일 결과를 보장한다.
+  - **채택: 결제수단(`method`) 기반 결정 규칙** — 거절 트리거 method가 들어오면 `declined("CARD_DECLINED", "카드사에서 결제가 거절되었습니다.")`, 그 외 `approved("MOCK-"+UUID)`.
+  - **거절 트리거 method는 `payments.method` CHECK 허용값(`card`/`bank_transfer`/`virtual_account`/`mock`) 중 하나여야 한다(중요 — DB 제약).** `acquireOrResolveReadyRow`는 PG 호출(⑤) **전**에 method를 담은 `ready` row를 INSERT하므로, CHECK 밖의 값(예: `"mock-decline"`)을 트리거로 쓰면 **PG 도달 전 ready INSERT가 CHECK 위반으로 실패**해 거절 분기에 진입조차 못 한다. → **채택: 트리거 = `virtual_account`**(기존 허용값 재사용, 신규 migration 불필요). 기본값 `mock` 및 일반적 `card`/`bank_transfer`는 승인 → 재시도 시 이 값들로 바꾸면 `failed→paid` 승인이 **실 게이트웨이로 도달 가능**. (전용 트리거 값을 원하면 후속 Task에서 `V4`로 CHECK에 값 추가 — 본 Task 범위 밖.)
+  - **이 규칙을 채택하는 이유(중요)**: `amount`는 `snapshot.finalAmount()`로 **주문당 고정**이라(같은 주문 재시도 = 같은 금액) 금액 임계 기반으로 거절하면 한 번 거절된 주문은 **재시도해도 영구 거절**되어 `failed→paid` 재시도 승인 경로(§1.4 Ma1 · §3.3 · line 312 수동확인)가 **실 게이트웨이로 도달 불가**가 된다. 반면 `method`는 클라이언트가 재시도 시 **주문을 변경하지 않고** 바꿀 수 있는 유일한 입력(`PaymentRequest.method` / `OrderPaymentForm.method`)이므로, "거절 → 결제수단 변경 후 재시도 승인"이 실 게이트웨이로도 재현 가능하다. 또한 주문·금액이 불변이라 재사용되는 `failed` payments row의 `amount`가 그대로 일치한다(amount setter 없음 — 금액 변경 방식은 row amount 불일치를 유발하므로 불가).
+  - **금액 임계는 채택하지 않는다(병용 시 주의)**: 자동 거절 데모로 금액 임계를 *선택적으로* 병용하려면 "임계 초과 거절은 (주문 금액 고정이므로) **재시도 승인 대상이 아님**"을 코드 주석·plan에 **명시**하고, `failed→paid` 재시도 승인 데모는 오직 `method` 레버로만 재현한다.
   - 단위 테스트는 **port를 모킹**해 거절을 주입(`given(gateway.authorize(any())).willReturn(declined(...))`)하고, 모의 구현 자체의 결정성은 `MockPaymentGatewayTest`가 별도로 검증한다.
 - `failureCode`는 event-catalog 예시(`INSUFFICIENT_FUNDS`/`LIMIT_EXCEEDED`/`CARD_DECLINED`) 중에서 사용한다.
 
@@ -152,16 +157,17 @@
 
 #### (B) 수정 — payment/domain
 - `shop-core/src/main/java/com/shop/shop/payment/domain/Payment.java`
-  - 신규 메서드 `markFailed(String failureCode, String failureReason)`: `paid`면 `IllegalStateException`(역전이 금지), `ready`/`failed`면 `status="failed"`. (failureCode/failureReason는 Entity 미영속 — 옵션 A. 전이 의도만 표현; 호출부가 이벤트/응답에 싣는다.)
+  - 신규 메서드 `markFailed(String failureCode, String failureReason)`: `paid`면 `IllegalStateException`(역전이 금지), `ready`면 `status="failed"` 전이, `failed`면 **상태 무변경 no-op**(재거절 멱등). (failureCode/failureReason는 Entity **미영속·현재 본문 미사용** — 옵션 A. 전이 의도/옵션 B 대비 시그니처; 호출부가 이벤트/응답에 싣는다. javadoc에 미사용·옵션 B 대비 명시.)
   - `markPaid` 확장(Ma1): `paid` 멱등 유지 + `failed→paid` 허용 추가(`ready`/`failed`가 아니면 `IllegalStateException`). `ready→paid` 회귀 없음.
-  - javadoc 갱신: "status는 017에서 failed 추가. markFailed: ready/failed→failed, paid→failed 금지. markPaid: ready/failed→paid 허용(Ma1)."
+  - javadoc 갱신: "status는 017에서 failed 추가. markFailed: ready→failed 전이/failed→failed no-op, paid→failed 금지. **인자(failureCode/failureReason)는 현재 미영속·미사용(옵션 A) — 전이 의도/옵션 B 대비.** markPaid: ready/failed→paid 허용(Ma1)."
 
 #### (B) 수정 — payment/service
 - `shop-core/src/main/java/com/shop/shop/payment/service/MockPaymentGateway.java`
   - 결정적 거절 규칙 활성화(1.9): 임계 조건 충족 시 `PaymentAuthorizationResult.declined(failureCode, failureReason)`, 그 외 `approved("MOCK-"+UUID)`. 무작위 금지. 규칙을 javadoc·주석에 명시.
 - `shop-core/src/main/java/com/shop/shop/payment/service/PaymentService.java`
   - 의존 추가: `MemberDirectory`(member.spi, Mi1), `ApplicationEventPublisher`.
-  - `pay` ⑤-B 거절 분기 신규(1.3): 현재 `throw new IllegalStateException(...)` 제거 → `markFailed` 전이 + `PaymentFailedEvent` 발행 + 주문 `pending` 유지(confirmPaid 미호출) + **거절 결과 반환**(C1).
+  - `pay`: **연락처를 PG 호출(⑤) 전 1회 사전 해석**(`memberDirectory.findContactByUserId(snapshot.userId())`)해 지역 변수로 보관(Mi1·모순4 후자). 해석 실패는 PG 호출 전 `PaymentEventResolutionException`(409). ⑤-B는 이 값을 재사용(재조회 금지).
+  - `pay` ⑤-B 거절 분기 신규(1.3): 현재 `throw new IllegalStateException(...)` 제거 → `markFailed` 전이 + 사전 해석 연락처로 `PaymentFailedEvent` 발행 + 주문 `pending` 유지(confirmPaid 미호출) + **거절 결과 반환**(C1).
   - `acquireOrResolveReadyRow` 확장(Ma1·Ma2, 1.5): 기존 row `failed` 재사용 분기 + 동시 충돌 재조회 `failed` 재사용 분기.
   - `PaymentResult` 거절 표현 확장: 거절 여부·`failureCode`·`failureReason`을 담는다(아래).
   - `amount` long 변환 헬퍼(P3, `longValueExact`, 위반 `AmountConversionException`) — order 016 헬퍼와 동일 규칙(payment 내부 private).
@@ -218,9 +224,9 @@
 2. `PaymentRestController.pay` → `PaymentServiceResponse.pay(auth, orderId, request)`.
 3. ServiceResponse: `userId=(long)auth.getPrincipal()` → `PaymentService.pay(userId, orderId, cmd)`.
 4. `PaymentService.pay`(@Transactional, 016 8단계 + ⑤-B):
-   - ①~④ 016 동일(getPayableOrder 404/완결성 409 → 멱등/충돌 → 금액 → ready 선점, Ma1/Ma2 failed 재사용 포함).
+   - ①~④ 016 동일(getPayableOrder 404/완결성 409 → 멱등/충돌 → 금액 → ready 선점, Ma1/Ma2 failed 재사용 포함). **연락처는 PG 호출 전 1회 사전 해석해 지역 변수로 보관**(member.spi, Mi1·모순4 후자).
    - ⑤ `authorize(...)` → 거절(`!approved`).
-   - ⑤-B: `markFailed(failureCode, failureReason)`(`ready/failed→failed`) → `member.spi.findContactByUserId`(Mi1) → `PaymentFailedEvent` 구성(amount longValueExact) → `publishEvent`(Outbox) → **주문 pending 유지(confirmPaid 미호출)** → 거절 `PaymentResult` 반환.
+   - ⑤-B: `markFailed(failureCode, failureReason)`(`ready→failed` 전이/`failed→failed` no-op) → **사전 해석한 연락처 재사용**(재조회 없음, Mi1·모순4 후자) → `PaymentFailedEvent` 구성(amount longValueExact) → `publishEvent`(Outbox) → **주문 pending 유지(confirmPaid 미호출)** → 거절 `PaymentResult` 반환.
    - ⑧ 커밋: `payments.status=failed` + `event_publication` 1행 원자 커밋(C1 — 롤백 없음).
 5. ServiceResponse(커밋 후): `result.declined()` → `PaymentDeclinedException`(402, `failureReason`) throw.
 6. `RestExceptionHandler` → `402 ErrorResponse`(message=`failureReason`, 내부 PG 원문/failureCode 비노출).
@@ -232,7 +238,7 @@
 4. 핸들러 `catch (BusinessException e)` → `flashError(e.getMessage())` + `redirect:/orders/{orderId}`. 주문 `pending` 유지 → 결제 폼 재노출.
 
 ### 3.3 거절 후 재시도 승인 (failed→paid, Ma1)
-1. 사용자 재요청 → ④ `acquireOrResolveReadyRow`가 기존 `failed` row 재사용(Ma1) → ⑤ `authorize` 승인(이번엔 임계 미충족) → ⑥ `markPaid`(`failed→paid`, Ma1) → ⑦ `confirmPaid`(주문 확정 + `OrderCompletedEvent`, 016 경로) → ⑧ 커밋. REST 200 / View flashSuccess.
+1. 사용자 재요청(거절 트리거가 아닌 정상 `method`로 재결제 — §1.9) → ④ `acquireOrResolveReadyRow`가 기존 `failed` row 재사용(Ma1, 주문·금액 불변이라 row `amount` 일치) → ⑤ `authorize` 승인 → ⑥ `markPaid`(`failed→paid`, Ma1) → ⑦ `confirmPaid`(주문 확정 + `OrderCompletedEvent`, 016 경로) → ⑧ 커밋. REST 200 / View flashSuccess.
 
 ### 3.4 PaymentFailedEvent 발행 경로 (Outbox, 004 메커니즘)
 - `PaymentService`(payment 모듈)가 `ApplicationEventPublisher.publishEvent(paymentFailedEvent)`를 트랜잭션 안에서 호출 → Modulith Registry가 `event_publication` INCOMPLETE 저장(Outbox) → 커밋 후 `spring-modulith-events-kafka`가 `@Externalized("payment-failed")`로 Kafka 발행 → COMPLETED. 페이로드 자족(memberEmail/memberName/failureCode/failureReason/amount/currency) — notification 역조회 불필요.
@@ -248,7 +254,7 @@
 |---|---|---|---|---|
 | **PG 거절(declined)** | PaymentService ⑤-B → 커밋 → ServiceResponse/Facade | **예외 아님(커밋)** → 커밋 후 `PaymentDeclinedException`(402) | **402** + ErrorResponse(message=failureReason)(C1·Ma3) | flashError(failureReason) → `/orders/{id}` redirect, pending 유지 |
 | 타인/미존재 주문 | OrderPaymentReader 소유권(016) | OrderNotFoundException(404) | 404 존재 은닉 | error 뷰(404) |
-| productId/연락처 해석 불가(PG 호출 전) | getPayableOrder 사전검증(016) | PaymentEventResolutionException(409) | 409 + 미생성 | flashError → `/orders/{id}` |
+| productId/연락처 해석 불가(**PG 호출 전** — getPayableOrder 사전검증 016 + ⑤ 전 payment 연락처 1회 사전해석, 모순4 후자) | getPayableOrder 사전검증 + ⑤ 전 연락처 해석 | PaymentEventResolutionException(409) | 409 + 미생성 | flashError → `/orders/{id}` |
 | 동시 ready 선점 경합(잔존 ready) | ④ uq 위반 후 재조회 ready(016) | PaymentInProgressException(409) | 409 | flashError → `/orders/{id}` |
 | 동시 패자 재조회 failed(Ma2) | ④ uq 위반 후 재조회 failed | **예외 아님** — failed row 재사용 경로 합류 | (재시도 결과에 따름) | (재시도 결과에 따름) |
 | 비정상 상태 전이(paid→failed 등) | Payment.markFailed | IllegalStateException(도메인 불변식) | 500 + 전체 롤백 | 500/error 뷰 |
@@ -276,7 +282,7 @@
 ### 단위(자동) — PaymentServiceDeclineTest (Mockito)
 - PG 거절(port mock `declined`) → `payments` `failed` 기록 + `PaymentFailedEvent` 발행(ArgumentCaptor) + **`OrderConfirmation.confirmPaid` 미호출** + `OrderCompletedEvent` 미발행 + 주문 status 변경 없음.
 - 거절 시 `pay`가 **예외를 던지지 않고** 거절 `PaymentResult`(`declined=true`) 반환(C1 — 트랜잭션 롤백 없음).
-- `PaymentFailedEvent` 페이로드 전 필드 매핑: `eventId`(non-null UUID)·`occurredAt`·`orderId`·`orderNumber`·`memberId`(=userId)·`memberEmail`/`memberName`(member.spi `findContactByUserId`로 채움, Mi1)·`amount`(long, finalAmount longValueExact)·`currency`("KRW")·`failureCode`·`failureReason`·`attemptedAt`.
+- `PaymentFailedEvent` 페이로드 전 필드 매핑: `eventId`(non-null UUID)·`occurredAt`·`orderId`·`orderNumber`·`memberId`(=userId)·`memberEmail`/`memberName`(member.spi `findContactByUserId`로 채움, Mi1)·`amount`(long, finalAmount longValueExact)·`currency`(`snapshot.currency()` — 하드코딩 아님)·`failureCode`·`failureReason`·`attemptedAt`.
 - ready 선점 분기 `failed` 재사용(Ma1): 기존 `failed` row 존재 시 신규 INSERT 없이 동일 row 재사용. 동시 충돌 재조회 `failed` 재사용(Ma2): NPE 없이 합류.
 - 거절 후 재시도 승인: `failed→paid` 전이 + `confirmPaid` 호출(016 확정 경로 진입).
 
@@ -309,7 +315,7 @@
 
 ### 실행 / 수동 확인
 - `./gradlew test` 전체 통과(통합 Testcontainers 자동).
-- (보조 수동) docker-compose 기동 후 거절 트리거(임계 초과 금액) 결제 1건 → `payments failed`·주문 `pending` 유지·Kafka `payment-failed` 메시지 1건·재시도 승인 시 `failed→paid`·`order-completed` 1건 확인. 확인/미확인 항목을 작업 보고에 남긴다.
+- (보조 수동) docker-compose 기동 후 거절 트리거(`method="virtual_account"` — CHECK 허용값) 결제 1건 → `payments failed`·주문 `pending` 유지·Kafka `payment-failed` 메시지 1건 확인 → **정상 `method`(`mock`/`card`)로 재결제**(주문·금액 불변) → `failed→paid`·`order-completed` 1건 확인. 확인/미확인 항목을 작업 보고에 남긴다.
 
 ### Acceptance Criteria 매핑 표
 
@@ -339,7 +345,7 @@
 - **ready 선점에 failed 재사용 분기 추가(Ma1) vs failed를 in-progress(409)로 취급**: `failed`는 "진행 중"이 아니라 "재시도 가능"이므로 `PaymentInProgressException`(409)로 막지 않고 동일 row를 재사용한다. 분기 한 갈래가 늘지만, 거절이 재결제를 영구 차단(409 막다른 상태)하는 결함을 막는다. `uq_payments_order_id` 불변식(주문당 1 row)은 유지.
 - **동시 패자 failed 합류 정의(Ma2) vs 미정의**: 선점 승자 거절로 `failed` row가 남은 뒤 패자 재조회가 `failed`를 만나는 케이스를 명시 정의(재사용 경로 합류)해 NPE·미정의 동작을 제거한다. 동시성 통합 테스트로 검증. 정의 비용 < 운영 비결정성.
 - **`PaymentFailedEvent`를 payment 모듈이 발행(package-structure-rule) vs order가 발행**: 016 `OrderCompletedEvent`(order 발행)와 발행 소유 모듈이 다르지만, 결제 실패는 payment 도메인 사건이므로 payment가 발행 소유한다. payment가 `member.spi`로 연락처를 직접 조회(Mi1)하는 추가 의존이 생기지만, member.spi는 published port라 구조 규칙 위반 아님(구조 테스트로 보장).
-- **연락처를 payment가 member.spi로 직접 조회(Mi1) vs order 스냅샷이 연락처 반환**: `OrderPaymentView`에 연락처 필드를 추가하지 않고(016 포트 무변경) payment가 `findContactByUserId`로 직접 조회한다. PG 호출 전(1단계 완결성 검증)에 해석 가능함이 보장되므로 "거절 후 연락처 누락"이 없다. 포트 안정성(016 무변경) 우선.
+- **연락처를 payment가 member.spi로 직접 조회(Mi1) vs order 스냅샷이 연락처 반환**: `OrderPaymentView`에 연락처 필드를 추가하지 않고(016 포트 무변경) payment가 `findContactByUserId`로 직접 조회한다. PG 호출 전(1단계 완결성 검증)에 해석 가능함이 보장되므로 "거절 후 연락처 누락"이 없다. 포트 안정성(016 무변경) 우선. **조회 시점은 PG 호출 전 1회로 고정하고 ⑤-B가 재사용한다(모순4 후자)** — 거절 커밋 구간(PG 호출 후)에 외부 조회를 두지 않아 트랜잭션 후반 조회 실패로 거절이 유실되지 않는다(C1). 비용은 승인 경로에서도 연락처를 1회 해석하는 것뿐이며, 정합성을 미세 최적화보다 우선한다.
 - **REST 거절 = 402 단일 확정(Ma3) vs 200 본문에 declined 표현**: 거절을 200 `PaymentResponse`(declined 플래그)로 표현하면 정상/실패 본문이 혼용되어 클라이언트 분기·캐시·재시도 정책이 모호해진다. 402 + ErrorResponse로 단일화해 HTTP 의미론을 명확히 한다. 200 혼용 금지.
 - **MockPaymentGateway 결정적 거절 규칙 vs 무작위**: 임계 기반 결정 규칙으로 단위 테스트 재현성을 확보한다(무작위 금지). 데모는 임계 한 가지만 노출 — 실 PG 전환 시 이 컴포넌트만 교체(포트 무변경). 결정성 > 데모 다양성.
 - **Outbox 통합은 event_publication 저장만 검증(실 Kafka 제외)**: 테스트 프로파일이 Kafka 자동설정 exclude(004 트레이드오프) → 실 브로커 외부화는 범위 밖. Outbox 원자성·payload 스키마는 Testcontainers로 자동 검증, 실 Kafka E2E는 별도 Task/E2E.
