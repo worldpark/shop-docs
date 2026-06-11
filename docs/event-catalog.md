@@ -129,17 +129,26 @@
 
 ## ShippingStartedEvent (topic: `shipping-started`)
 
+> **020 배송 단위 개정**: `shipmentId`(long) + `items[]`(productId·productName·quantity) 추가.
+> 발행 주체: `order` 모듈. 소비자: `notification`(미구현 — 현재 구독 없음).
+> 필드 상세 SSOT: 본 문서. 토픽 목록은 `docs/architecture.md` §5 참조.
+
 | 필드 | 타입 | 필수 | 설명 |
 |---|---|---|---|
 | `eventId` | UUID | ✓ | 공통 봉투 |
-| `occurredAt` | ISO-8601 | ✓ | 공통 봉투 |
+| `occurredAt` | ISO-8601 | ✓ | 공통 봉투 (shippedAt과 동일 값) |
 | `orderId` | long | ✓ | 주문 PK |
 | `orderNumber` | string | ✓ | 사용자 노출용 주문번호 |
+| `shipmentId` | long | ✓ | 배송 PK (배송 단위 식별자, 020 추가) |
 | `memberId` | long | ✓ | 회원 PK |
 | `memberEmail` | string | ✓ | 알림 수신 이메일 |
 | `memberName` | string | ✓ | 수신자 이름 |
 | `carrier` | string | ✓ | 택배사명 |
 | `trackingNumber` | string | ✓ | 운송장 번호 |
+| `items` | array | ✓ | 이 배송에 포함된 항목 목록 (주문 전체 아님, 020 추가) |
+| `items[].productId` | long | ✓ | 상품 PK (product.spi 해석값) |
+| `items[].productName` | string | ✓ | 상품명 (주문 시점 스냅샷) |
+| `items[].quantity` | int | ✓ | 수량 (주문 시점 스냅샷) |
 | `shippedAt` | ISO-8601 | ✓ | 배송 시작 시각 |
 
 ```json
@@ -148,11 +157,15 @@
   "occurredAt": "2026-06-03T09:00:00Z",
   "orderId": 1024,
   "orderNumber": "ORD-20260603-001024",
+  "shipmentId": 55,
   "memberId": 77,
   "memberEmail": "buyer@example.com",
   "memberName": "김철수",
   "carrier": "CJ대한통운",
   "trackingNumber": "1234567890",
+  "items": [
+    { "productId": 5, "productName": "무선 키보드", "quantity": 2 }
+  ],
   "shippedAt": "2026-06-03T09:00:00Z"
 }
 ```
