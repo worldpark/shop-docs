@@ -15,12 +15,19 @@
 | 016 결제 승인 + 주문 확정 + OrderCompletedEvent | 완료 |
 | 017 결제 거절 + PaymentFailedEvent | 완료(+ forward-compat 이음매 `OrderConfirmation.Outcome`, revision-1 §3) |
 | **018 주문 취소 + 결제 환불 + 재고 복원 (with View)** | **착수(본 로드맵과 함께 작성됨)** — `docs/tasks/backend/018-...-with-view.md` |
+| **019 주문 이행 — Shipment 모델 + 배송 생성(preparing) (with View)** | **착수(1.1 승격, 단계 1/3)** — `docs/tasks/backend/019-backend-shop-core-order-shipment-model-and-creation-with-view.md` |
+| **020 주문 이행 — 배송 시작(shipping) + ShippingStartedEvent (with View)** | **대기(단계 2/3, 019 선행)** — `docs/tasks/backend/020-backend-shop-core-order-shipment-start-shipping-started-event-with-view.md` |
+| **021 주문 이행 — 배송 완료(delivered) (with View)** | **대기(단계 3/3, 020 선행)** — `docs/tasks/backend/021-backend-shop-core-order-shipment-delivery-completion-with-view.md` |
 
 ---
 
 ## 1. 주문/결제 라이프사이클 후속 (도메인 흐름)
 
-### 1.1 주문 배송/이행 상태 관리 (preparing → shipping → delivered)
+### 1.1 주문 배송/이행 상태 관리 (preparing → shipping → delivered) — **승격: Task 019·020·021(3분할)**
+> **배송을 별도 엔티티로 모델링(Order 1:N Shipment)** — multi-seller·부분 배송 때문에 주문 단위 단일 운송장 모델을 폐기하고 `shipments`/`shipment_items` 신설(`orders.status`는 rollup 집계값). 전이 주체는 **ADMIN 단일**(판매자 범위 이행은 `shipments.seller_id` 이음매로만 두고 backlog 002로 연기). 결제(016/017) 입자도로 **단계 3분할**:
+> - **019**(`...-order-shipment-model-and-creation-with-view.md`): Shipment 모델 + 스키마(`V4`) + 배송 생성(`preparing`) + rollup `paid→preparing` + admin 생성 View + 소비자 조회. **이벤트 없음.**
+> - **020**(`...-order-shipment-start-shipping-started-event-with-view.md`): 배송 시작(`shipping`) + **`ShippingStartedEvent` 배송 단위 개정**(shipmentId+items[], 구독 컨슈머 없어 안전·문서 먼저) + P2 productId 사전검증 + 추적정보 View.
+> - **021**(`...-order-shipment-delivery-completion-with-view.md`): 배송 완료(`delivered`) + rollup `→delivered`(전 항목 배정 && 전 배송 완료 판정).
 - 영역: shop-core (order, 일부 view / 판매자·관리자)
 - 출처: 016/017 — 결제 완료(`paid`) 이후 주문 라이프사이클 미구현. **`docs/event-catalog.md`에 `ShippingStartedEvent`(topic `shipping-started`)가 이미 정의되어 있어 발행처가 예정된 상태.**
 - 범위(예): `paid → preparing → shipping → delivered` 전이(판매자/관리자 액션), 배송 시작 시 `ShippingStartedEvent` 발행(Outbox), 송장/배송 추적 필드, 상태별 화면.

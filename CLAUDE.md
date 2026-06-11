@@ -33,5 +33,6 @@ API를 추가하거나 변경할 때는 반드시 `docs/rules/api-authorization-
 - Task 수행 규칙: `docs/rules/task-rule.md`
 - 테스트 규칙: `docs/rules/testing-rule.md`
 - 서브에이전트 작업 규칙: `docs/rules/subagent-rule.md`
+- 검증 게이트 규칙: `docs/rules/verification-gate-rule.md`
 - 금지 규칙: `docs/rules/forbidden-rule.md`
 - 패키지 구조 규칙: `docs/rules/package-structure-rule.md`

@@ -10,4 +10,5 @@
 | [ADR-004](004-workspace-level-event-contract-ssot.md) | Accepted | 프로젝트 간 이벤트 계약은 상위 workspace 문서인 `docs/event-catalog.md`를 SSOT로 관리한다. |
 | [ADR-005](005-database-first-concurrency-redisson-later.md) | Accepted | 현재는 DB 기반 동시성 제어를 우선하고, 다중 노드 단계에서 Redisson 분산락을 도입한다. |
 | [ADR-006](006-object-storage-key-and-local-first-assets.md) | Accepted | 정적 자산은 storage key만 저장하고 `ObjectStorage` 뒤에 둔다. |
+| [ADR-007](007-flyway-owned-schema-hibernate-validate.md) | Accepted | DB 스키마 생성과 변경은 Flyway가 소유하고, Hibernate는 `ddl-auto=validate`로 검증만 수행한다. |
 | [ADR-009](009-playwright-java-e2e-external-app-target.md) | Accepted | E2E 테스트는 Playwright for Java와 외부 앱 타겟 방식으로 구성한다. |
