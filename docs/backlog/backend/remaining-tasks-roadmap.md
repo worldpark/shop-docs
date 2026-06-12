@@ -14,10 +14,11 @@
 | 001~015 | 완료(공통·Modulith·Outbox·인증·회원·상품·장바구니·주문 생성) |
 | 016 결제 승인 + 주문 확정 + OrderCompletedEvent | 완료 |
 | 017 결제 거절 + PaymentFailedEvent | 완료(+ forward-compat 이음매 `OrderConfirmation.Outcome`, revision-1 §3) |
-| **018 주문 취소 + 결제 환불 + 재고 복원 (with View)** | **착수(본 로드맵과 함께 작성됨)** — `docs/tasks/backend/018-...-with-view.md` |
-| **019 주문 이행 — Shipment 모델 + 배송 생성(preparing) (with View)** | **착수(1.1 승격, 단계 1/3)** — `docs/tasks/backend/019-backend-shop-core-order-shipment-model-and-creation-with-view.md` |
-| **020 주문 이행 — 배송 시작(shipping) + ShippingStartedEvent (with View)** | **대기(단계 2/3, 019 선행)** — `docs/tasks/backend/020-backend-shop-core-order-shipment-start-shipping-started-event-with-view.md` |
-| **021 주문 이행 — 배송 완료(delivered) (with View)** | **대기(단계 3/3, 020 선행)** — `docs/tasks/backend/021-backend-shop-core-order-shipment-delivery-completion-with-view.md` |
+| 018 주문 취소 + 결제 환불 + 재고 복원 (with View) | 완료 |
+| 019 주문 이행 — Shipment 모델 + 배송 생성(preparing) (with View) | 완료(단계 1/3) |
+| 020 주문 이행 — 배송 시작(shipping) + ShippingStartedEvent (with View) | 완료(단계 2/3) |
+| 021 주문 이행 — 배송 완료(delivered) (with View) | 완료(단계 3/3) |
+| **022 미결제 주문 만료(TTL) — 자동 취소 + 재고 복원** | **착수(1.2 승격)** — `docs/tasks/backend/022-backend-shop-core-unpaid-order-expiry-auto-cancel-stock-restore.md` |
 
 ---
 
@@ -33,11 +34,11 @@
 - 범위(예): `paid → preparing → shipping → delivered` 전이(판매자/관리자 액션), 배송 시작 시 `ShippingStartedEvent` 발행(Outbox), 송장/배송 추적 필드, 상태별 화면.
 - 선행: 016(주문 확정). 권한은 SELLER/ADMIN 중심 → backlog 002(판매자/관리자) 정합.
 
-### 1.2 결제 미완료 TTL / stale row 정리 + 미결제 주문 만료
+### 1.2 결제 미완료 TTL / stale row 정리 + 미결제 주문 만료 — **승격: Task 022**
+> **022**(`...-unpaid-order-expiry-auto-cancel-stock-restore.md`): `created_at` 기준 TTL 초과 `pending` 주문을 스케줄러가 감지 → 018 취소/복원 흐름을 **시스템 주도(소유권 없음)·`pending` 전용·환불 없음** 경로로 재사용(주문 `cancelled` + 재고 복원 + 결제 row `cancelled` + `OrderCancelledEvent` refunded=false). 신규 migration/이벤트/도메인 전이 없음. stale `ready`/`failed` row 정리는 만료 취소가 `cancelled` 전이로 흡수(물리 삭제·보존정책은 범위 밖). 스케줄러 빈은 테스트 비활성 가드. 비동기 PG 대비는 후속(3.2).
 - 영역: shop-core (payment·order, 스케줄러)
 - 출처: **017이 명시적으로 범위 밖**으로 둠 — "`ready`/`failed` row의 만료(TTL)·정리(cleanup) 스케줄러는 비동기 PG·주문 만료 Task에서 도입".
-- 범위(예): 일정 시간 미결제(`pending`) 주문 자동 만료 → **자동 취소 + 재고 복원**(018의 취소/복원 흐름 재사용), stale `ready` row 정리, 비동기 PG 도입 대비 정합. 스케줄러는 `ThreadLocal` 미사용·블로킹 I/O 경계 준수(CLAUDE.md 가상스레드 대비).
-- 선행: **018(취소/재고복원 흐름)**, 016/017.
+- 선행: **018(취소/재고복원 흐름)**, 016/017. (구현 완료 전제 충족 — 019~021 완료)
 
 ### 1.3 부분 취소 (item 단위)
 - 영역: shop-core (payment·order·inventory)
