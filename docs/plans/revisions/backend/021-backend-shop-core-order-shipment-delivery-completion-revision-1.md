@@ -74,7 +74,7 @@
 
 - **rollup 판정은 기존 쿼리 재사용 — 신규 Repository/쿼리 금지(과설계 방지)**: "전 항목 배정 && 전 배송 delivered"는 `order.getItems()` + `ShipmentRepository.findAssignedOrderItemIds(orderId)` + `findByOrderId(orderId)`로 계산 가능. 초기 task의 "필요 시 OrderItemRepository 조회"·"신규 쿼리"는 불필요.
 - **rollup 시 방금 delivered된 shipment 상태 포함**: "전 배송 delivered" 판정은 같은 트랜잭션의 `findByOrderId` 재조회가 managed `delivered`를 반영해야 정확(task에 명시).
-- **방어 가드(020 계승)**: 주문 `cancelled`/`refunded` → 409 + 주문이 `shipping`이 아니면 409(배송이 `shipping`이면 주문도 `shipping`이어야 함). 018 상호작용 정합.
+- **방어 가드(020 계승)**: 주문 `cancelled`/`refunded` → 409 + 주문이 `shipping`이 아니면 409(배송이 `shipping`이면 주문도 `shipping`이어야 함). 018 상호작용 정합. *(revision-2에서 순서 정정 — 멱등 delivered 우선: 상태 재검증은 `cancelled/refunded → 멱등 delivered(200) → 방어 가드 → 그 외 409 → 진행` 순서로 확정. 이 옛 서술의 "방어 가드 → 멱등" 순서는 supersede됨.)*
 - **deliver는 이벤트·member.spi·product.spi 의존 없음**: 배송완료 이벤트는 범위 밖(카탈로그 미정의)이라 `ApplicationEventPublisher`/P2/연락처가 불필요. 020 `ship`보다 서비스 의존이 단순(`OrderRepository`·`ShipmentRepository`만).
 
 ## 7. 파급 정리
