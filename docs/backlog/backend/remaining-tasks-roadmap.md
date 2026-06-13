@@ -1,6 +1,7 @@
 # 남은 Task 로드맵 (post-017 / 018 착수 시점 기준)
 
 > 작성일: 2026-06-10
+> 갱신: 2026-06-13 — **022~025(+024-1) 전부 완료**. notification 신뢰성 라인(023 발송 → 024 post-commit/상태머신/DLQ재처리 → 024-1 외부화 직렬화 교정 → 025 CircuitBreaker) 종료. 이제 미구현 = 아래 §1.3·1.4(도메인 후속) / §3(아키텍처: payment 분리·실 PG·R2/CDN·분산락) / §4(회원·인증 backlog 001~006) / §5(기타 확장) / §6(품질) + notification backlog 008(RedisConfig 정리)·009(Redis dedup 보류분)·011(CB 메트릭/헬스).
 > 목적: `017`(결제 거절) 완료 + `018`(주문 취소/환불/재고복원) 착수 시점에서, **앞으로 남은 작업**을 한 문서로 모은다. 도메인 흐름 후속 · 이벤트 소비(notification) · 아키텍처(모듈 분리/실 PG) · 회원/인증 · 도메인 확장 · 품질을 구분한다.
 > 성격: 로드맵(후보·의존·제안 순서). 정식 착수 시 `docs/tasks/backend/`로 승격해 Task 명세를 작성한다. **번호/순서는 권장일 뿐 확정 실행 순서가 아니다.**
 > 관련: 과거 Task에서 명시적으로 미뤄둔 항목은 `docs/backlog/backend/README.md`(기존 backlog 인덱스)에도 있다 — 본 문서는 그것까지 포함한 **전체 잔여 그림**이다.
@@ -18,11 +19,12 @@
 | 019 주문 이행 — Shipment 모델 + 배송 생성(preparing) (with View) | 완료(단계 1/3) |
 | 020 주문 이행 — 배송 시작(shipping) + ShippingStartedEvent (with View) | 완료(단계 2/3) |
 | 021 주문 이행 — 배송 완료(delivered) (with View) | 완료(단계 3/3) |
-| **022 미결제 주문 만료(TTL) — 자동 취소 + 재고 복원** | **착수(1.2 승격)** — `docs/tasks/backend/022-backend-shop-core-unpaid-order-expiry-auto-cancel-stock-restore.md` |
+| **022 미결제 주문 만료(TTL) — 자동 취소 + 재고 복원** | **완료(1.2 승격)** — `docs/tasks/backend/022-backend-shop-core-unpaid-order-expiry-auto-cancel-stock-restore.md` (shop-core `e303159`) |
 | **023 notification 도메인 이벤트 → 실제 이메일 발송 (채널 추상화 + order-cancelled 구독)** | **완료(2.1 승격)** — `docs/tasks/backend/023-backend-notification-domain-event-email-dispatch-with-channel-abstraction.md` (+ JpaAuditingConfig auditing 누락 버그 수정, e2e 로그 스모크 검증) |
 | ~~Redis dedup 적용~~ | **보류(삭제)** — DB `processed_event` 권위로 충분(단일/다중 노드). 측정된 DB 읽기 병목 시 재검토. backlog 009 dedup 항목 유지. 결정: `docs/plans/revisions/backend/notification-dedup-store-redis-vs-db-decision-revision-1.md` |
-| 024 notification post-commit 발송 분리(exactly-once 근접) + 발송 이력/DLQ 재처리(V2) | **골조(skeleton)** — 023 후속, backlog 009(이력) 승격. **다중 노드 신뢰성 우선 트랙.** `docs/tasks/backend/024-backend-notification-post-commit-dispatch-and-send-history.md` |
-| 025 notification SMTP CircuitBreaker(Resilience4j) — 외부 의존 회복탄력성 | **골조(skeleton)** — 023 후속(회복탄력성). `docs/tasks/backend/025-backend-notification-smtp-circuitbreaker-resilience4j.md` |
+| 024 notification post-commit 발송 분리 + 발송 상태머신(V2) + DLQ 재처리 | **완료** — 023 후속, backlog 009(발송 이력) 흡수(`processed_event` PENDING→SENT/FAILED 상태머신·FAILED audit·`.DLQ` 재처리). `docs/tasks/backend/024-backend-notification-post-commit-dispatch-and-send-history.md` (notification `a1f3377`) |
+| **024-1 shop-core Modulith Kafka 외부화 직렬화 교정 (이중 직렬화 버그)** | **완료** — 024 라이브 연계 스모크에서 발견한 발행측 base64 이중 직렬화 버그(JsonSerializer→ByteArraySerializer). `docs/tasks/backend/024-1-backend-shop-core-modulith-kafka-externalization-serializer-fix.md` (shop-core `446e539`) + revision `shop-core-modulith-externalization-serializer-bug-and-e2e-smoke-revision-1.md` + testing-rule §종단 스모크 신설 |
+| 025 notification SMTP CircuitBreaker(Resilience4j) — 외부 의존 회복탄력성 | **완료** — 023 후속(회복탄력성). 데코레이터+resilience4j-core. `docs/tasks/backend/025-backend-notification-smtp-circuitbreaker-resilience4j.md` (notification `7765594`). 메트릭/헬스 노출은 backlog 011로 분리 |
 
 ---
 
@@ -68,6 +70,8 @@
 - 선행: 005(Consumer 골격), 발행 측 각 Task. **backlog 008(RedisConfig 정리)·009(dedup+발송 이력/DLQ 테이블) 동반 권장.**
 
 > 관련 기존 backlog: `005 welcome-event`(회원가입 알림), `008 notification RedisConfig 정리`, `009 notification dedup+이력`.
+
+> **현황(2026-06-13)**: 023이 후속 **024(post-commit 발송 분리 + `processed_event` 상태머신 PENDING→SENT/FAILED + `.DLQ` 재처리) → 024-1(shop-core 외부화 직렬화 교정) → 025(SMTP CircuitBreaker)** 로 확장되며 발송 신뢰성까지 완료. 023이 범위 밖으로 뒀던 항목 중 **post-commit/발송 이력은 024가 흡수**, 회복탄력성은 025가 처리. **남은 notification 미구현**: SMS/푸시 채널, backlog 008(RedisConfig 정리), backlog 009의 **Redis dedup 적용분(보류 — 측정 후)**, backlog 011(CB 메트릭/헬스 노출). welcome 알림(005 backlog)은 회원가입 Task와 연계.
 
 ---
 
@@ -132,20 +136,22 @@
 
 ## 제안 실행 순서 (의존 기준 — 강제 아님)
 
+완료(✓): 016~022, 1.1(019·020·021), 1.2(022), 2.1(023) + 024/024-1/025(notification 신뢰성).
+
 ```
-018(취소/환불/재고복원, 착수)
-   └─> 1.2(미결제 TTL/만료 — 018 취소흐름 재사용)
-   └─> 1.3(부분 취소) ─> 1.4(반품/교환, 1.1 필요)
+[남은 작업 — 의존 기준, 강제 아님]
 
-1.1(배송/이행 상태, ShippingStartedEvent 발행) ──┐
-2.1(notification 발송 핸들러) <───────── 발행 측(016/017/018/1.1) + 008·009
-                                              └─ 005(welcome) 함께
+✓018(취소/환불/재고복원)
+   └─> 1.3(부분 취소) ─> 1.4(반품/교환, ✓1.1 필요)
 
-3.1(payment 모듈 분리) ── 016/017/018 안정화 후, 분리 확정 시
+3.1(payment 모듈 분리) ── 016/017/018 안정화 후(완료), 분리 확정 시
 3.2(실 PG) ── 3.1/1.2와 연계(비동기·환불)
+3.3(정적 자산 R2+CDN) ── 독립
+3.4(분산락 = backlog 007) ── 품질 6.010 선행
 
-회원/인증(4): 002는 1.1(판매자) 전, 004는 2.1과 연계
+회원/인증(backlog 001~006): 002(판매자/관리자)는 1.1(판매자 범위) 정합, 004·005는 notification 발송과 연계
+notification backlog: 008(RedisConfig 정리, 경량) · 009(Redis dedup, 측정 후) · 011(CB 메트릭/헬스)
 품질(6.010): 007(분산락) 선택 시 선행
 ```
 
-> 핵심 의존 요약: **재고 복원/취소 흐름(018)** 이 1.2(만료)·1.3(부분취소)의 토대. **발행 측 이벤트(016/017/018/1.1)** 가 갖춰질수록 **2.1(notification 발송)** 의 가치가 커진다. **모듈 분리(3.1)** 는 도메인(거절·취소)이 안정화된 뒤, 분리가 확정되면 착수한다(현재는 무해한 이음매까지만 적용).
+> 핵심 의존 요약: 취소/배송/notification 신뢰성은 완료. 남은 도메인은 **1.3 부분취소 → 1.4 반품/교환**(✓018 토대). 아키텍처 큰 작업은 **3.1 payment 분리 → 3.2 실 PG**(도메인 안정화된 현 시점이 적기, 현재는 무해한 이음매까지만). 회원/인증·기타 확장(§5)·품질(§6)은 요구 확정 시 착수.
