@@ -20,7 +20,9 @@
 | 021 주문 이행 — 배송 완료(delivered) (with View) | 완료(단계 3/3) |
 | **022 미결제 주문 만료(TTL) — 자동 취소 + 재고 복원** | **착수(1.2 승격)** — `docs/tasks/backend/022-backend-shop-core-unpaid-order-expiry-auto-cancel-stock-restore.md` |
 | **023 notification 도메인 이벤트 → 실제 이메일 발송 (채널 추상화 + order-cancelled 구독)** | **완료(2.1 승격)** — `docs/tasks/backend/023-backend-notification-domain-event-email-dispatch-with-channel-abstraction.md` (+ JpaAuditingConfig auditing 누락 버그 수정, e2e 로그 스모크 검증) |
-| 024 notification 발송 신뢰성/회복탄력성 (post-commit + CircuitBreaker + dedup + 발송 이력) | **골조(skeleton)** — 023 후속, backlog 008·009 승격. `docs/tasks/backend/024-backend-notification-dispatch-reliability-and-resilience.md` |
+| ~~Redis dedup 적용~~ | **보류(삭제)** — DB `processed_event` 권위로 충분(단일/다중 노드). 측정된 DB 읽기 병목 시 재검토. backlog 009 dedup 항목 유지. 결정: `docs/plans/revisions/backend/notification-dedup-store-redis-vs-db-decision-revision-1.md` |
+| 024 notification post-commit 발송 분리(exactly-once 근접) + 발송 이력/DLQ 재처리(V2) | **골조(skeleton)** — 023 후속, backlog 009(이력) 승격. **다중 노드 신뢰성 우선 트랙.** `docs/tasks/backend/024-backend-notification-post-commit-dispatch-and-send-history.md` |
+| 025 notification SMTP CircuitBreaker(Resilience4j) — 외부 의존 회복탄력성 | **골조(skeleton)** — 023 후속(회복탄력성). `docs/tasks/backend/025-backend-notification-smtp-circuitbreaker-resilience4j.md` |
 
 ---
 

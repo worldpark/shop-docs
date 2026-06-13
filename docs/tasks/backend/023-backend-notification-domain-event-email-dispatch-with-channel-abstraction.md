@@ -11,7 +11,7 @@ notification
 - **이벤트 타입별 메시지 렌더링**(수신자·제목·본문)을 추가한다 — **자족 페이로드만** 사용(shop-core 역조회 금지).
 - **`order-cancelled` 구독을 신설**한다 — `018`이 발행하고 `architecture.md` §5에 notification 소비자로 등록돼 있으나 005 골격이 미구독한 토픽이다(DTO·Consumer·핸들러 부재). 이걸 추가해 4개 토픽 전부를 발송으로 연결한다.
 
-> 본 Task는 **이메일 채널의 실제 발송**만 다룬다. SMS/푸시 채널, **발송 신뢰성/회복탄력성(Resilience4j CircuitBreaker·post-commit 발송 분리·발송 이력/DLQ 재처리) → 후속 Task 024(backlog 009 승격)**, Redis dedup 적용(009/024), `RedisConfig` 정리(backlog 008)는 **범위 밖**이다. 멱등은 005가 만든 `processed_event`(DB UNIQUE) 권위 저장소를 그대로 재사용하고, 실패 시엔 005의 Kafka 재시도/DLQ를 재사용한다(고급 회복탄력성은 024).
+> 본 Task는 **이메일 채널의 실제 발송**만 다룬다. SMS/푸시 채널, **post-commit 발송 분리·발송 이력/DLQ 재처리 → 후속 Task 024**, **Resilience4j CircuitBreaker → 025**은 **범위 밖**이다. **Redis dedup·`RedisConfig` 정리(008)는 보류**(DB `processed_event` 권위로 충분 — `docs/plans/revisions/backend/notification-dedup-store-redis-vs-db-decision-revision-1.md`). 멱등은 005가 만든 `processed_event`(DB UNIQUE) 권위 저장소를 그대로 재사용하고, 실패 시엔 005의 Kafka 재시도/DLQ를 재사용한다(고급 회복탄력성은 025).
 
 ---
 
@@ -30,7 +30,7 @@ notification
   - 본 Task는 이 구조를 **그대로 유지**하고 `dispatch` 구현만 실제 발송으로 교체한다. **재시도/DLQ 골격을 재설계하지 않는다.**
 - **at-least-once / 이중 발송 윈도우(설계상 인지 — plan에서 기본값 확정)**
   - 이메일 전송은 **롤백 불가한 외부 부작용**이다. 005의 claim+dispatch 단일 트랜잭션에서 "전송 성공 → 커밋 실패(드묾)" 시 같은 이벤트가 재시도되어 **이메일이 한 번 더 갈 수 있다**(at-least-once + DB 멱등이 지배적 dedup, 잔여 중복 윈도우는 커밋 실패 시점에 한함).
-  - **권장 기본값**: 005의 단일 트랜잭션 구조를 **유지**한다 — 전송 실패 시 롤백→재시도로 **알림 유실을 막는 것**이 사이드 프로젝트 단계에서 드문 중복보다 우선이다. **정확히 한 번(exactly-once)** 을 위한 커밋-후-발송(post-commit) + 발송상태 머신/이력 테이블은 **후속 Task 024(backlog 009 승격) 범위**다(본 Task에서 구조 변경 금지).
+  - **권장 기본값**: 005의 단일 트랜잭션 구조를 **유지**한다 — 전송 실패 시 롤백→재시도로 **알림 유실을 막는 것**이 사이드 프로젝트 단계에서 드문 중복보다 우선이다. **정확히 한 번(exactly-once)** 을 위한 커밋-후-발송(post-commit) + 발송상태 머신/이력 테이블은 **후속 Task 024 범위**다(본 Task에서 구조 변경 금지).
   - (인지) 블로킹 SMTP 호출이 DB 트랜잭션 내부에서 일어나 트랜잭션이 전송 시간만큼 길어진다(커넥션 보유). 사이드 프로젝트 수용 범위이며, 비동기/post-commit 분리는 024로 미룬다. **가상스레드 대비(CLAUDE.md): 블로킹 I/O(SMTP)는 발송 어댑터(Infra 경계)에 두고 `ThreadLocal` 직접 사용 금지.**
 - **레이어 규칙(005·package-structure-rule 계승)**
   - Consumer는 로직 없이 `EventProcessingService`로만 위임(Repository 직접 호출 금지, 예외 잡지 않음 — `DefaultErrorHandler` 위임).
@@ -73,8 +73,8 @@ notification
 - **이벤트 계약 무변경**: `event-catalog.md`/`architecture.md` §5 변경 없음. notification DTO는 계약 미러링만. 신규 토픽/이벤트/필드 추가 없음. **소비 측이 계약을 바꾸지 않는다.**
 - **shop-core 역조회 금지**: notification은 shop-core 코드/DB/REST를 참조하지 않는다. 발송에 필요한 모든 값은 페이로드에서만 취한다(자족). 페이로드에 없는 정보가 필요하면 그것은 **계약 개정(발행 측 Task)** 이지 본 Task가 아니다.
 - **005 파이프라인 보존**: Consumer→Service→(채널) 위임·멱등 단일 트랜잭션·재시도/DLQ 골격을 재설계하지 않는다. `dispatch` 구현 교체 + `order-cancelled` 구독 추가 + 렌더링/채널 신설에 한정. Consumer는 Repository 직접 호출·예외 흡수 금지.
-- **범위 밖(명시)**: SMS/푸시 채널, **발송 신뢰성/회복탄력성 → 후속 Task 024(backlog 009 승격)** — Resilience4j **CircuitBreaker**(SMTP 장애 격리·fail-fast), **post-commit/비동기 발송 분리**(exactly-once 윈도우 축소), **발송 실패/DLQ 이력·재처리 테이블·`processed_event` 상태머신 확장**, Redis dedup 적용. 그 외 `RedisConfig @ConditionalOnBean` 정리(008), 템플릿 엔진/다국어. **신규 Flyway 마이그레이션 없음**(발송 이력 테이블 미도입 — `processed_event` 그대로).
-  - **재시도 자체는 005의 Kafka 재시도/DLQ를 재사용**한다(본 Task가 별도 재시도 프레임워크를 도입하지 않는다). Resilience4j는 **메시지 재배달 계층(Kafka `DefaultErrorHandler`+DLQ)을 대체하지 않으며**, 도입 시 아웃바운드 SMTP 호출 둘레의 CircuitBreaker로 한정한다 — 024 소관.
+- **범위 밖(명시)**: SMS/푸시 채널, **post-commit/비동기 발송 분리(exactly-once 윈도우 축소)·발송 실패/DLQ 이력·재처리 테이블·`processed_event` 상태머신 확장 → 024**, **Resilience4j CircuitBreaker(SMTP 장애 격리·fail-fast) → 025**. **Redis dedup 적용·`RedisConfig @ConditionalOnBean` 정리(008)는 보류**(DB 권위로 충분 — revision 문서). 그 외 템플릿 엔진/다국어. **신규 Flyway 마이그레이션 없음**(발송 이력 테이블 미도입 — `processed_event` 그대로).
+  - **재시도 자체는 005의 Kafka 재시도/DLQ를 재사용**한다(본 Task가 별도 재시도 프레임워크를 도입하지 않는다). Resilience4j는 **메시지 재배달 계층(Kafka `DefaultErrorHandler`+DLQ)을 대체하지 않으며**, 도입 시 아웃바운드 SMTP 호출 둘레의 CircuitBreaker로 한정한다 — 025 소관.
 - **at-least-once 수용**: 단일 트랜잭션 유지로 전송 후 커밋 실패 시 드문 이중 발송을 수용한다(유실 방지 우선). 구조 변경(post-commit)은 024.
 - **프로파일/테스트 오염 금지(verification-gate)**: 신규 발송/채널/렌더 빈은 `@Profile("kafkatest | !test")` 가드 유지. 실제 SMTP 어댑터가 **풀컨텍스트 `test`에서 외부 접속을 시도하지 않도록** 한다(빈 지연 생성·dev 어댑터 기본). 발송 로직 테스트는 컨테이너 트리거가 아니라 **Service/렌더/채널을 직접 호출** + **Mock/Fake `EmailSender`** 로 검증한다(실제 메일 전송 금지).
 - **가상스레드 대비**: 블로킹 SMTP I/O는 발송 어댑터(Infra 경계)에 격리, `ThreadLocal` 직접 사용 금지(CLAUDE.md).

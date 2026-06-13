@@ -34,3 +34,16 @@
 - 변경한 프로젝트에서 `./gradlew test` 전체 통과를 확인한다.
 - 인프라(DB/Kafka/Redis)가 필요한 실동작은 가능하면 로컬 docker-compose로 수동 확인하고, 확인/미확인 항목을 작업 보고에 남긴다.
 - 브라우저 E2E(`./gradlew e2eTest`)는 `check`/`test`에 포함되지 않는 **별도 태스크**다(실행 중인 앱 필요 — 일반 `test`의 인프라 비의존 원칙 보존). 실행/판정은 `e2e-runner` 에이전트 또는 CI 스텝이 담당한다.
+
+## 서비스 간 이벤트 종단(end-to-end) 스모크 — 필수
+> 배경/실증: `docs/plans/revisions/backend/shop-core-modulith-externalization-serializer-bug-and-e2e-smoke-revision-1.md`(shop-core 외부화 이중 직렬화 버그를 라이브 종단 스모크로만 발견).
+
+- **이벤트 드리븐 통합(shop-core 발행 → notification 소비)에는 토픽별 종단 스모크를 최소 1개 둔다.** 발행측이 **무증상**이기 때문이다: 외부화가 "성공" 커밋돼도 wire 직렬화가 깨지면 발행측엔 예외가 없고, 결함은 **오직 컨슈머 역직렬화에서만** 드러난다.
+- 아래 계층은 이 결함(발행 wire ↔ 소비 계약 불일치)을 **구조적으로 놓친다 — 이것들로 대체 금지**:
+  - in-process 캡처(`@TransactionalEventListener(AFTER_COMMIT)` + `externalization.enabled=false`): 직렬화/wire 단계를 타지 않는다.
+  - 컨슈머 단독 통합(컨슈머 자신의 DTO로 produce하는 EmbeddedKafka): **합성 이벤트**라 실제 발행측 직렬화 경로를 안 거친다.
+  - 순진한 wire 테스트도 `application.yml` **classpath shadow**(test resource가 main을 가림)로 production 직렬화 설정을 안 읽어 **false-pass**할 수 있다(실증됨).
+- **종단 스모크의 정의**: **실제 발행측 경로(`@Externalized`/Outbox)로 발행된 실 이벤트** → 실제 컨슈머 → **종단 상태 도달**(예: notification `processed_event` `SENT` + 발송 로그)을 단언. **합성 이벤트 주입으로 대체하지 않는다.**
+- **비용 절감 조합 허용**: 토픽 전수 대신 (a) 공유 발행 경로를 대표하는 **1~2개 종단 스모크** + (b) **직렬화 설정 회귀 가드**(production `application.yml` 값을 파일경로로 직접 읽어 단언 — classpath shadow 우회)를 조합해도 된다. 핵심은 "**실 wire가 실 컨슈머에서 처리되는가**"를 CI가 한 번은 확인하는 것.
+- **배치**: 종단 스모크가 일반 `test`의 인프라 비의존 원칙과 충돌하면(docker-compose 양 앱 기동 등) 브라우저 E2E처럼 **별도 태스크/스텝**으로 분리하고 `e2e-runner` 또는 CI 스텝이 담당한다. EmbeddedKafka로 발행측 외부화 경로를 실제로 태울 수 있으면 `test` 내에 두되, **effective 직렬화 설정을 명시 고정**해 라이브러리 기본값에 암묵 의존하지 않는다.
+- **회귀 가드의 RED는 경험으로 확인한다**(공통 §"통과 개수를 안전 근거로 삼지 않는다" 연장): "버그 설정에서 실패"는 **실제로 토글해 RED를 확인**해야 보장된다 — precedence/이론 추론으로 갈음하지 않는다.
