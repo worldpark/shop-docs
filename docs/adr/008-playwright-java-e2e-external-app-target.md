@@ -1,4 +1,4 @@
-# ADR-009 — Playwright for Java와 외부 앱 타겟 방식으로 E2E 테스트를 구성
+# ADR-008 — Playwright for Java와 외부 앱 타겟 방식으로 E2E 테스트를 구성
 
 - 작성일: 2026-06-10
 - 상태: Accepted
