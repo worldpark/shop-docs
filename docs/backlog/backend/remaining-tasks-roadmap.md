@@ -1,7 +1,7 @@
 # 남은 Task 로드맵 (post-017 / 018 착수 시점 기준)
 
 > 작성일: 2026-06-10
-> 갱신: 2026-06-13 — **022~025(+024-1) 전부 완료**. notification 신뢰성 라인(023 발송 → 024 post-commit/상태머신/DLQ재처리 → 024-1 외부화 직렬화 교정 → 025 CircuitBreaker) 종료. 이제 미구현 = 아래 §1.3·1.4(도메인 후속) / §3(아키텍처: payment 분리·실 PG·R2/CDN·분산락) / §4(회원·인증 backlog 001~006) / §5(기타 확장) / §6(품질) + notification backlog 008(RedisConfig 정리)·009(Redis dedup 보류분)·011(CB 메트릭/헬스).
+> 갱신: 2026-06-13 — **022~025(+024-1) 전부 완료** + **027(판매자 신청·심사·승격) 완료**(backlog 002 범위 A 승격). notification 신뢰성 라인(023 발송 → 024 post-commit/상태머신/DLQ재처리 → 024-1 외부화 직렬화 교정 → 025 CircuitBreaker) 종료. 이제 미구현 = 아래 §1.3·1.4(도메인 후속) / §3(아키텍처: payment 분리·실 PG·R2/CDN·분산락) / §4(회원·인증 backlog 001·003~006 + 002 잔여=판매자 범위 인가) / §5(기타 확장) / §6(품질) + notification backlog 008(RedisConfig 정리)·009(Redis dedup 보류분)·011(CB 메트릭/헬스).
 > 목적: `017`(결제 거절) 완료 + `018`(주문 취소/환불/재고복원) 착수 시점에서, **앞으로 남은 작업**을 한 문서로 모은다. 도메인 흐름 후속 · 이벤트 소비(notification) · 아키텍처(모듈 분리/실 PG) · 회원/인증 · 도메인 확장 · 품질을 구분한다.
 > 성격: 로드맵(후보·의존·제안 순서). 정식 착수 시 `docs/tasks/backend/`로 승격해 Task 명세를 작성한다. **번호/순서는 권장일 뿐 확정 실행 순서가 아니다.**
 > 관련: 과거 Task에서 명시적으로 미뤄둔 항목은 `docs/backlog/backend/README.md`(기존 backlog 인덱스)에도 있다 — 본 문서는 그것까지 포함한 **전체 잔여 그림**이다.
@@ -25,6 +25,7 @@
 | 024 notification post-commit 발송 분리 + 발송 상태머신(V2) + DLQ 재처리 | **완료** — 023 후속, backlog 009(발송 이력) 흡수(`processed_event` PENDING→SENT/FAILED 상태머신·FAILED audit·`.DLQ` 재처리). `docs/tasks/backend/024-backend-notification-post-commit-dispatch-and-send-history.md` (notification `a1f3377`) |
 | **024-1 shop-core Modulith Kafka 외부화 직렬화 교정 (이중 직렬화 버그)** | **완료** — 024 라이브 연계 스모크에서 발견한 발행측 base64 이중 직렬화 버그(JsonSerializer→ByteArraySerializer). `docs/tasks/backend/024-1-backend-shop-core-modulith-kafka-externalization-serializer-fix.md` (shop-core `446e539`) + revision `shop-core-modulith-externalization-serializer-bug-and-e2e-smoke-revision-1.md` + testing-rule §종단 스모크 신설 |
 | 025 notification SMTP CircuitBreaker(Resilience4j) — 외부 의존 회복탄력성 | **완료** — 023 후속(회복탄력성). 데코레이터+resilience4j-core. `docs/tasks/backend/025-backend-notification-smtp-circuitbreaker-resilience4j.md` (notification `7765594`). 메트릭/헬스 노출은 backlog 011로 분리 |
+| **027 판매자 신청·심사·승격 워크플로우 (with View)** | **완료(backlog 002 범위 A 승격)** — CONSUMER 판매자 신청 → ADMIN 심사(승인/반려) → 승인 시 008 `MemberService.changeRole`로 SELLER 승격. `SellerApplication` 상태머신 + V5(`seller_application`, 부분 유니크 PENDING 1건). 인가≠자격 분리(신청 floor=authenticated, CONSUMER-only는 서비스 409). REST+View + E2E(조건부 가시성). `docs/tasks/backend/027-backend-shop-core-seller-application-review-promotion-with-view.md` (shop-core `8a7b800`). **잔여(backlog 002 범위 B)**: 판매자 범위 인가(products·shipments `seller_id` 스코핑) — §4 002 참조 |
 
 ---
 
@@ -112,7 +113,7 @@
 | backlog # | 항목 | 비고 |
 |---|---|---|
 | 001 | `/me` 엔드포인트 중복 정리(auth/me ↔ members/me) | 표면 정리 |
-| 002 | 판매자/관리자 가입·권한 관리 | 1.1(배송, SELLER) 전 권장 |
+| 002 | 판매자/관리자 가입·권한 관리 | **범위 A(판매자 신청·심사·승격) = Task 027 완료**. 관리자 권한 변경 API = Task 008 완료. **잔여 = 범위 B: 판매자 범위 인가**(products·shipments `seller_id` 스코핑, SELLER 자기 것만 관리) |
 | 003 | Kakao OAuth2 / 소셜 로그인 | 확장 |
 | 004 | 계정 관리(비번 재설정/변경, 정보수정/탈퇴) | 재설정 메일은 2.1 연계 |
 | 005 | 회원가입 Welcome 알림 이벤트 | 2.1(notification) 연계 |
@@ -136,7 +137,7 @@
 
 ## 제안 실행 순서 (의존 기준 — 강제 아님)
 
-완료(✓): 016~022, 1.1(019·020·021), 1.2(022), 2.1(023) + 024/024-1/025(notification 신뢰성).
+완료(✓): 016~022, 1.1(019·020·021), 1.2(022), 2.1(023) + 024/024-1/025(notification 신뢰성) + 027(판매자 신청·심사·승격 = backlog 002 범위 A).
 
 ```
 [남은 작업 — 의존 기준, 강제 아님]
@@ -149,7 +150,7 @@
 3.3(정적 자산 R2+CDN) ── 독립
 3.4(분산락 = backlog 007) ── 품질 6.010 선행
 
-회원/인증(backlog 001~006): 002(판매자/관리자)는 1.1(판매자 범위) 정합, 004·005는 notification 발송과 연계
+회원/인증(backlog 001·003~006): 002 범위 A(판매자 신청·심사·승격)=✓Task 027, 잔여 범위 B(판매자 범위 인가)는 products·shipments 스코핑, 004·005는 notification 발송과 연계
 notification backlog: 008(RedisConfig 정리, 경량) · 009(Redis dedup, 측정 후) · 011(CB 메트릭/헬스)
 품질(6.010): 007(분산락) 선택 시 선행
 ```
