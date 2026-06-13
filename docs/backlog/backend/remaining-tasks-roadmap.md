@@ -19,6 +19,8 @@
 | 020 주문 이행 — 배송 시작(shipping) + ShippingStartedEvent (with View) | 완료(단계 2/3) |
 | 021 주문 이행 — 배송 완료(delivered) (with View) | 완료(단계 3/3) |
 | **022 미결제 주문 만료(TTL) — 자동 취소 + 재고 복원** | **착수(1.2 승격)** — `docs/tasks/backend/022-backend-shop-core-unpaid-order-expiry-auto-cancel-stock-restore.md` |
+| **023 notification 도메인 이벤트 → 실제 이메일 발송 (채널 추상화 + order-cancelled 구독)** | **완료(2.1 승격)** — `docs/tasks/backend/023-backend-notification-domain-event-email-dispatch-with-channel-abstraction.md` (+ JpaAuditingConfig auditing 누락 버그 수정, e2e 로그 스모크 검증) |
+| 024 notification 발송 신뢰성/회복탄력성 (post-commit + CircuitBreaker + dedup + 발송 이력) | **골조(skeleton)** — 023 후속, backlog 008·009 승격. `docs/tasks/backend/024-backend-notification-dispatch-reliability-and-resilience.md` |
 
 ---
 
@@ -56,7 +58,8 @@
 
 ## 2. 이벤트 소비 측 (notification — 이벤트 루프 닫기)
 
-### 2.1 notification: 도메인 이벤트 소비 → 실제 알림 발송
+### 2.1 notification: 도메인 이벤트 소비 → 실제 알림 발송 — **승격: Task 023(이메일 채널)**
+> **023**(`...-domain-event-email-dispatch-with-channel-abstraction.md`): 005 골격 위에 **실제 이메일 발송** — 발송 채널 추상화(이메일 우선) + 이벤트 타입별 렌더링(수신자·제목·본문, 자족 페이로드만) + **`order-cancelled` 구독 신설**(018 발행·§5 등록됐으나 005 미구독). 멱등은 005 `processed_event` 재사용. **SMS/푸시·Redis dedup 적용(009)·발송 이력 테이블(009)·RedisConfig 정리(008)·post-commit 분리(exactly-once)는 범위 밖.** 단일 트랜잭션 유지(at-least-once, 유실 방지 우선).
 - 영역: notification (consumer·service)
 - 출처: 016/017/018이 `order-completed`·`payment-failed`·(`order-cancelled`)·(`shipping-started`)를 **발행하지만, 실제 알림(이메일/SMS/푸시)을 보내는 발송 핸들러가 없다**(005는 Consumer 멱등/DLQ 골격만).
 - 범위(예): 토픽별 Consumer + 발송 핸들러(멱등), 발송 채널 추상화(이메일 우선). 자족 페이로드만 사용(shop-core 역조회 금지).
