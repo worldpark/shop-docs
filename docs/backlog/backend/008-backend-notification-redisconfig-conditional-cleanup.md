@@ -1,6 +1,6 @@
 # (backlog) notification RedisConfig @ConditionalOnBean 선제 정리
 
-> 상태: backlog (미착수)
+> 상태: **승격 — Task 026** (`docs/tasks/backend/026-backend-notification-redisconfig-conditional-cleanup.md`, 2026-06-13). 정식 명세는 해당 Task 문서를 따른다.
 > 영역: notification (backend / common.config)
 > 출처: RefreshTokenStore 기동 실패 버그 수정 보고 + `docs/review-patterns.md` P1 — notification에 동일 취약 패턴 잔존
 
