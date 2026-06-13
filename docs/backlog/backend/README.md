@@ -15,5 +15,6 @@
 | 008 | notification RedisConfig @ConditionalOnBean 선제 정리 | notification | P1 버그수정 보고 |
 | 009 | notification 알림 dedup 적용 + 발송 이력/DLQ 테이블 | notification | Task 004/005 |
 | 010 | 상품 이미지 개수 상한의 동시성 엄격 보장 (race 방지) | shop-core | Task 012 |
+| 011 | notification SMTP CircuitBreaker 메트릭/헬스 노출 (resilience4j-spring-boot3 + Actuator) | notification | Task 025 plan |
 
-> 의존 관계 참고: 005는 notification 발송 핸들러와, 009는 008과 함께 진행 권장. 007은 재고/쿠폰 도메인 Task와 함께 적용. 010은 엄격 보장에 분산락(007) 방식 선택 시 007 선행.
+> 의존 관계 참고: 005는 notification 발송 핸들러와, 009는 008과 함께 진행 권장. 007은 재고/쿠폰 도메인 Task와 함께 적용. 010은 엄격 보장에 분산락(007) 방식 선택 시 007 선행. 011은 Task 025 완료 후 관측성 요구 발생 시(선측정·후도입).
