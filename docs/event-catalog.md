@@ -4,6 +4,23 @@
 > 시스템 상위 구조·통신 방향은 `docs/architecture.md`, 이벤트 작성·변경 규칙은 `docs/rules/event-contract-rule.md`를 따른다.
 > 토픽 목록은 `docs/architecture.md` 섹션 5에도 요약되어 있으며, 이 문서가 필드 레벨 상세의 단일 출처다.
 
+## 토픽 인덱스 (커버리지)
+
+> shop-core가 발행하고 **notification이 구독**하는 알림 계약 토픽은 아래 6종이다. 각 이벤트는 Spring Modulith `@Externalized`로 외부화되어 Outbox(`event_publication`) → Kafka로 발행되고, notification의 `NotificationEventConsumer`가 `groupId="notification"`으로 구독한다(코드 대조 확인: 2026-06-14).
+
+| 토픽 | 이벤트 | 발행 모듈 | 구독자 | 발행 계기(Task) |
+|---|---|---|---|---|
+| `order-completed` | OrderCompletedEvent | order | notification | 결제 승인·주문 확정(016) |
+| `payment-failed` | PaymentFailedEvent | payment | notification | 결제 거절(017) |
+| `order-cancelled` | OrderCancelledEvent | order | notification | 주문 취소·환불(018) / 미결제 만료 자동취소(022) |
+| `shipping-started` | ShippingStartedEvent | order | notification | 배송 시작(020) |
+| `member-registered` | MemberRegisteredEvent | member | notification | 회원가입 환영(028) |
+| `password-reset-requested` | PasswordResetRequestedEvent | member | notification | 비밀번호 재설정(030) |
+
+> **비-알림 인프라 토픽(참고 — 계약 아님)**: `shop-core-smoke-test`(`DummyOutboxSmokeEvent`: `eventId`/`occurredAt`/`message`)는 platform 모듈의 **Outbox·Kafka 외부화 스모크 테스트용**(024-1)이며 **notification이 구독하지 않는다**. 알림 페이로드 계약이 아니므로 본 카탈로그 SSOT 대상에서 제외한다(드리프트 아님).
+>
+> **무이벤트 도메인 동작(참고)**: 쿠폰 발급·적용(031), 리뷰(032 예정), 계정 self-service(029), 배송 완료(021)는 **신규 이벤트를 발행하지 않는다**(내부 상태 변경). 특히 쿠폰 할인은 `OrderCompletedEvent.totalAmount`/`OrderCancelledEvent.refundedAmount`가 이미 **할인 후 최종 금액**(`Order.finalAmount`/실 결제액)을 싣고 있어 계약 무변경으로 자동 반영된다.
+
 ## 공통 봉투(Envelope)
 
 모든 이벤트는 아래 필드를 **공통으로** 포함한다(멱등·추적용).

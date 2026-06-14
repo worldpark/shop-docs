@@ -1,9 +1,9 @@
 # 쇼핑몰 DB 설계 문서
 
 > 개인 사이드 프로젝트(포트폴리오용) 쇼핑몰의 데이터베이스 설계 문서.
-> 스키마의 정본(source of truth)은 Flyway 마이그레이션(`V1`~`V5`)이며, 이 문서는 그 구조와 설계 의도를 설명한다.
+> 스키마의 정본(source of truth)은 Flyway 마이그레이션이며(shop-core `V1`~`V6`, notification `V1`~`V2`), 이 문서는 그 구조와 설계 의도를 설명한다.
 
-> **문서 동기화 메모(2026-06-13)**: 현재 스키마는 `V1`~`V5`까지 적용돼 있으며, 본 문서는 전 테이블(회원/판매자 온보딩/카탈로그/주문/결제/배송/쿠폰/리뷰 + Outbox)을 반영한다. V4 배송(`shipments`, `shipment_items`)은 §4.4, V5 판매자 신청(`seller_application`)은 §4.1에 기술한다.
+> **문서 동기화 메모(2026-06-14)**: shop-core 스키마는 `V1`~`V6`까지 적용돼 있으며, 본 문서 §2~§9는 전 테이블(회원/판매자 온보딩/카탈로그/주문/결제/배송/쿠폰/리뷰 + Outbox)을 반영한다. V3 상품 소유자(`products.owner_id`)·status 대문자화는 §4.2, V4 배송(`shipments`, `shipment_items`)은 §4.4, V5 판매자 신청(`seller_application`)은 §4.1, V6 계정 라이프사이클(`users.status`/`deleted_at`)은 §4.1에 기술한다. notification은 **독립 PostgreSQL 인스턴스**를 쓰며 자기 소유 테이블(`processed_event`, `V1`~`V2`)만 §10에 별도 기술한다.
 
 ## 1. 개요
 
@@ -13,8 +13,8 @@
 | ORM | Spring Data JPA (Hibernate 6) |
 | 마이그레이션 | Flyway |
 | 범위 | 회원 · 판매자 온보딩 · 카탈로그(옵션/재고) · 장바구니 · 주문 · 결제(mock) · 배송 · 쿠폰 · 리뷰 · 관리자 |
-| 테이블 수 | 22 (도메인 21 + Outbox 인프라 1) — V4 `shipments`·`shipment_items`, V5 `seller_application` 포함 |
-| 도메인 수 | 6 |
+| 테이블 수 | shop-core 22 (도메인 21 + Outbox 인프라 1) — V4 `shipments`·`shipment_items`, V5 `seller_application` 포함 / notification 1 (`processed_event`, **독립 DB** — §10) |
+| 도메인 수 | 6 (shop-core) |
 
 ### 컨벤션
 
@@ -46,6 +46,7 @@ erDiagram
   User ||--o{ Order : places
   User ||--o{ Review : writes
   User ||--o{ UserCoupon : holds
+  User ||--o{ Product : owns
   User ||--o{ SellerApplication : applies
   User ||--o{ SellerApplication : reviews
   Category ||--o{ Category : parent
@@ -96,6 +97,7 @@ erDiagram
   Product {
     bigint id PK
     bigint category_id FK
+    bigint owner_id FK
     text name
     varchar status
   }
@@ -208,9 +210,13 @@ erDiagram
 | name | text | NOT NULL | |
 | phone | text | | |
 | role | varchar(20) | NOT NULL, CHECK(CONSUMER/SELLER/ADMIN) | 기본 CONSUMER — V2 마이그레이션으로 교체(V1은 customer/admin) |
+| status | varchar(20) | NOT NULL, DEFAULT 'ACTIVE', CHECK(ACTIVE/WITHDRAWN) | 계정 상태 — V6(소프트 삭제) |
+| deleted_at | timestamptz | | 탈퇴 시각(활성=NULL) — V6 |
 | created_at / updated_at | timestamptz | NOT NULL, DEFAULT now() | 트리거 갱신 |
 
 > **V2 마이그레이션 사유**: Task 006에서 `ROLE_ADMIN > ROLE_SELLER > ROLE_CONSUMER` 계층형 권한 모델 도입으로 role 값이 Java enum `Role{CONSUMER, SELLER, ADMIN}` 상수명(대문자)과 1:1 매핑되도록 변경됨. V1은 Flyway checksum으로 불변이므로 `V2__users_role_hierarchy.sql`로 처리.
+
+> **V6 마이그레이션 사유(Task 029)**: 로그인 사용자 self-service 탈퇴를 **소프트 삭제**로 지원. 탈퇴 시 행을 물리 삭제하지 않고 `status='WITHDRAWN'` + `deleted_at`=탈퇴시각으로 전이(`orders` 등 FK 연관·감사 추적 보존). `email` UNIQUE를 유지하므로 탈퇴 행이 이메일을 점유 → 동일 email 재가입 불가(재사용 허용은 별도 Task — 부분 유니크 + 익명화 설계 필요). 활성 사용자 전용 조회는 `WHERE status='ACTIVE'`(또는 `deleted_at IS NULL`)로 인증 가드.
 
 #### `addresses`
 회원 배송지. 사용자당 기본 배송지는 1개만 허용(partial unique index).
@@ -265,10 +271,11 @@ erDiagram
 |------|------|------|------|
 | id | bigint | PK | |
 | category_id | bigint | FK → categories, ON DELETE SET NULL | |
+| owner_id | bigint | FK → users, ON DELETE RESTRICT | 판매자/소유자 식별 — V3(소유권 검사용, nullable, 앱이 등록 시 채움). `idx_products_owner_id` |
 | name | text | NOT NULL | |
 | description | text | | |
 | base_price | numeric(12,2) | NOT NULL, CHECK ≥ 0 | 대표 표시가 |
-| status | varchar(20) | NOT NULL, CHECK(draft/on_sale/sold_out/hidden) | |
+| status | varchar(20) | NOT NULL, CHECK(DRAFT/ON_SALE/SOLD_OUT/HIDDEN) | V1 소문자 → V3에서 대문자 교체(JPA enum 정합, V2 role 패턴 계승). DEFAULT 없음 → 등록 기본 DRAFT는 앱(`ProductService.create`)이 강제 |
 | created_at / updated_at | timestamptz | NOT NULL | |
 
 #### `product_images`
@@ -578,7 +585,7 @@ ORDER BY oiov.option_name, revenue DESC;
 |--------|--------|------|
 | addresses | `(user_id)`, `UNIQUE(user_id) WHERE is_default` | 조회 / 기본배송지 1개 |
 | seller_application | `(user_id)`, `(status)`, `UNIQUE(user_id) WHERE status='PENDING'` | 신청 조회·상태 필터 / PENDING 1건(중복 신청 차단) |
-| products | `(category_id)`, `(status)` | 카테고리·상태 필터 |
+| products | `(category_id)`, `(status)`, `(owner_id)` | 카테고리·상태 필터 / 소유자(V3) |
 | product_images | `(product_id)`, `UNIQUE(product_id) WHERE is_primary` | 상품 이미지 조회 / 대표 이미지 1개 |
 | product_variants | `(product_id)` | 상품별 variant 조회 |
 | orders | `(user_id)`, `(status)`, `(created_at)` | 주문 조회/집계 |
@@ -590,3 +597,26 @@ ORDER BY oiov.option_name, revenue DESC;
 | reviews | `(product_id)`, `(user_id)` | 상품/회원 리뷰 |
 
 > **§9 메모 (Task 008)**: 관리자 회원 검색(`GET /api/v1/admin/members`, `GET /admin/members`)에서 `users.role` 필터를 사용한다. 현재 `(role)` 단독 인덱스는 없으며, 본 Task는 신규 마이그레이션을 만들지 않는다. 데이터가 충분히 증가하면 `CREATE INDEX ON users(role)` 인덱스를 후속 마이그레이션으로 추가 검토한다.
+
+## 10. notification 스키마 (독립 인스턴스)
+
+> notification은 shop-core와 **별도 PostgreSQL 인스턴스**를 사용하며(동기 호출·DB 공유 없음 — Kafka 이벤트로 단방향·비동기 연결), 자기 소유 테이블만 가진다. shop-core 도메인 테이블(`users`/`orders` 등)은 절대 포함하지 않는다. 정본은 notification 레포의 Flyway(`V1`~`V2`).
+
+### `processed_event`
+Kafka 이벤트 멱등 처리 이력 + 알림 발송 상태머신. `event_id` UNIQUE로 중복 이벤트 처리를 차단하고(at-least-once 컨슈머 멱등), 발송 상태(`PENDING → SENT | FAILED`)와 재시도를 추적한다.
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|------|------|------|------|
+| id | bigint | PK, identity | |
+| event_id | uuid | NOT NULL, UNIQUE | 이벤트 식별자(멱등 키) — `uq_processed_event_event_id` |
+| event_type | varchar(255) | NOT NULL | 이벤트 타입 |
+| status | varchar(255) | NOT NULL, CHECK(PENDING/SENT/FAILED) | V1은 PROCESSED/FAILED → V2에서 PENDING/SENT/FAILED로 교체(기존 PROCESSED→SENT 이행) |
+| failure_reason | text | | 실패 사유(FAILED 시) |
+| attempts | int | NOT NULL, DEFAULT 1 | 발송 시도 횟수(최초 claim=1, 재claim마다 +1) — V2 |
+| dispatched_at | timestamptz | | 발송(SENT 전이) 시각 — V2 |
+| last_failure_at | timestamptz | | 최근 실패(FAILED 전이) 시각 — V2 |
+| created_at / updated_at | timestamptz | NOT NULL, DEFAULT now() | **Spring Data JPA auditing 소유**(트리거 아님 — shop-core와 차이) |
+
+- **created_at/updated_at 소유권 차이(DEVIATION)**: shop-core는 DB 트리거(`set_updated_at`)가 소유하지만, notification은 `@CreatedDate`/`@LastModifiedDate`(JPA auditing, Task 002 `BaseEntity`)가 소유한다. `NOT NULL DEFAULT now()`는 auditing 누락 시 2차 방어선이며, **트리거는 정의하지 않는다**(BaseEntity 변경 시 기존 테스트 파손 위험 회피).
+- **발송 상태머신(V2)**: `PENDING`(claim) → `SENT`(발송 성공, `dispatched_at` set) | `FAILED`(발송 실패, `last_failure_at` set). `attempts`로 재시도 횟수를 추적한다(post-commit 발송·재처리는 Task 024, SMTP 서킷브레이커는 Task 025 참조).
+- **인덱스**: `uq_processed_event_event_id`(event_id UNIQUE)가 멱등 조회·중복 차단을 겸한다.
