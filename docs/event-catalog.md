@@ -147,10 +147,42 @@
 }
 ```
 
+## PasswordResetRequestedEvent (topic: `password-reset-requested`)
+
+> 발행 주체: `member` 모듈. 소비자: `notification`(비밀번호 재설정 메일 렌더링·DLQ 재처리 매핑 구현).
+> 비로그인 흐름 — 이메일 존재 여부와 무관하게 응답은 동일(enumeration 방지). 이메일이 존재할 때만 이벤트 발행.
+> 필드 상세 SSOT: 본 문서. 토픽 목록은 `docs/architecture.md` §5 참조.
+>
+> **Outbox 한계 주의**: `resetUrl`에 평문 토큰이 담겨 `event_publication.serialized_event`에 잔존하나,
+> 유효성은 Redis 키로만 판정(TTL 30분·1회용)되어 만료/사용 시 redeem 불가한 죽은 값이 된다.
+> 전역 Outbox 정리 정책 무변경(revision-1 근거). 동일 DB BCrypt 해시·PII보다 덜 민감.
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `eventId` | UUID | ✓ | 공통 봉투(멱등 키) |
+| `occurredAt` | ISO-8601(UTC) | ✓ | 공통 봉투(발행 시각) |
+| `memberId` | long | ✓ | 회원 PK |
+| `memberEmail` | string | ✓ | 재설정 메일 수신 이메일 |
+| `memberName` | string | ✓ | 수신자 이름 |
+| `resetUrl` | string | ✓ | 비밀번호 재설정 링크(토큰 포함, 메일 전달 목적 한정) |
+| `expiresAt` | ISO-8601(UTC) | ✓ | 토큰 만료 시각(발행 시각 + 30분) |
+
+```json
+{
+  "eventId": "c3d4e5f6-0000-0000-0000-000000000006",
+  "occurredAt": "2026-06-14T10:00:00Z",
+  "memberId": 102,
+  "memberEmail": "user@example.com",
+  "memberName": "홍길동",
+  "resetUrl": "http://localhost:8080/password-reset/confirm?token=a1b2c3d4e5f6...",
+  "expiresAt": "2026-06-14T10:30:00Z"
+}
+```
+
 ## ShippingStartedEvent (topic: `shipping-started`)
 
 > **020 배송 단위 개정**: `shipmentId`(long) + `items[]`(productId·productName·quantity) 추가.
-> 발행 주체: `order` 모듈. 소비자: `notification`(미구현 — 현재 구독 없음).
+> 발행 주체: `order` 모듈. 소비자: `notification`(구독·이메일 렌더링·DLQ 재처리 매핑 구현).
 > 필드 상세 SSOT: 본 문서. 토픽 목록은 `docs/architecture.md` §5 참조.
 
 | 필드 | 타입 | 필수 | 설명 |
