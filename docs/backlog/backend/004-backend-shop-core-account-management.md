@@ -1,6 +1,9 @@
 # (backlog) 계정 관리 — 비밀번호 재설정/변경, 회원 정보 수정/탈퇴
 
-> 상태: backlog (미착수)
+> 상태: **승격 완료 → Task 029 + 030** (1 Task = 1 기능 분리)
+> - **Task 029**(`docs/tasks/backend/029-backend-shop-core-account-self-service-management-with-view.md`): 로그인 self-service — 비밀번호 변경 · 정보 수정(name/phone) · 탈퇴(소프트 삭제·V6). 이벤트/알림 없음.
+> - **Task 030**(`docs/tasks/backend/030-backend-shop-core-password-reset-with-notification-and-view.md`): 비로그인 비밀번호 재설정 — Redis 토큰(1회용·단기) + `PasswordResetRequestedEvent`(topic `password-reset-requested`) + notification 재설정 메일.
+> (이하 원본 backlog 내용 — 명세는 Task 029/030을 따른다)
 > 영역: shop-core (backend / member, 일부 view)
 > 출처: Task 007 범위 밖 — "비밀번호 재설정·변경, 회원 정보 수정/탈퇴"
 

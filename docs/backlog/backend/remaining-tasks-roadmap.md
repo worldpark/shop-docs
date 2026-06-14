@@ -115,8 +115,8 @@
 | 001 | `/me` 엔드포인트 중복 정리(auth/me ↔ members/me) | 표면 정리 |
 | 002 | 판매자/관리자 가입·권한 관리 | **범위 A(판매자 신청·심사·승격) = Task 027 완료**. 관리자 권한 변경 API = Task 008 완료. **잔여 = 범위 B: 판매자 범위 인가**(products·shipments `seller_id` 스코핑, SELLER 자기 것만 관리) |
 | 003 | Kakao OAuth2 / 소셜 로그인 | 확장 |
-| 004 | 계정 관리(비번 재설정/변경, 정보수정/탈퇴) | 재설정 메일은 2.1 연계 |
-| 005 | 회원가입 Welcome 알림 이벤트 | 2.1(notification) 연계 |
+| 004 | 계정 관리(비번 재설정/변경, 정보수정/탈퇴) | **승격: Task 029(로그인 self-service: 비번 변경·정보 수정·탈퇴 소프트삭제 V6)** + **Task 030(비로그인 비번 재설정: Redis 토큰 + `PasswordResetRequestedEvent` + notification 발송)**. 재설정 메일이 2.1(notification) 연계 |
+| 005 | 회원가입 Welcome 알림 이벤트 | **승격: Task 028**(`MemberRegisteredEvent`/topic `member-registered` 계약 + shop-core Outbox 발행 + notification 구독·발송). 2.1(notification) 인프라 재사용 |
 | 006 | JWT refresh 회전/token family | 보안 강화 |
 
 ---
@@ -150,7 +150,7 @@
 3.3(정적 자산 R2+CDN) ── 독립
 3.4(분산락 = backlog 007) ── 품질 6.010 선행
 
-회원/인증(backlog 001·003~006): 002 범위 A(판매자 신청·심사·승격)=✓Task 027, 잔여 범위 B(판매자 범위 인가)는 products·shipments 스코핑, 004·005는 notification 발송과 연계
+회원/인증(backlog 001·003~006): 002 범위 A(판매자 신청·심사·승격)=✓Task 027, 잔여 범위 B(판매자 범위 인가)는 products·shipments 스코핑. **004=✓승격 Task 029(self-service)+030(재설정), 005=✓승격 Task 028(Welcome)** — 028·030은 notification 발송 연계(신규 토픽). 남은 backlog: 001(/me 정리)·003(OAuth2)·006(refresh 회전)
 notification backlog: 008(RedisConfig 정리, 경량) · 009(Redis dedup, 측정 후) · 011(CB 메트릭/헬스)
 품질(6.010): 007(분산락) 선택 시 선행
 ```

@@ -8,8 +8,8 @@
 | 001 | `/me` 엔드포인트 중복 정리 (auth/me ↔ members/me) | shop-core | Task 007 §1.7 |
 | 002 | 판매자/관리자 가입·권한 관리 (관리자 Task) | shop-core | Task 006/007 |
 | 003 | Kakao OAuth2 / 소셜 로그인 | shop-core | Task 006/007 |
-| 004 | 계정 관리 (비밀번호 재설정/변경, 정보수정/탈퇴) | shop-core | Task 007 |
-| 005 | 회원가입 Welcome 알림 이벤트 발행 | shop-core → notification | Task 007 |
+| 004 | 계정 관리 (비밀번호 재설정/변경, 정보수정/탈퇴) **(→ 승격: Task 029 self-service + 030 재설정)** | shop-core (+notification) | Task 007 |
+| 005 | 회원가입 Welcome 알림 이벤트 발행 **(→ 승격: Task 028)** | shop-core → notification | Task 007 |
 | 006 | JWT refresh token 회전(rotation)/token family | shop-core | Task 006 |
 | 007 | 분산락 실제 구현 (Redisson 재검토) | shop-core | Task 005/006 |
 | 008 | notification RedisConfig @ConditionalOnBean 선제 정리 **(→ 승격: Task 026)** | notification | P1 버그수정 보고 |

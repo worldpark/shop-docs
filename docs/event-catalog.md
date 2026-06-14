@@ -127,6 +127,26 @@
 }
 ```
 
+## MemberRegisteredEvent (topic: `member-registered`)
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `eventId` | UUID | ✓ | 공통 봉투(멱등 키) |
+| `occurredAt` | ISO-8601(UTC) | ✓ | 공통 봉투(발행 시각 — `Instant.now()`, 커밋 직전) |
+| `memberId` | long | ✓ | 회원 PK |
+| `memberEmail` | string | ✓ | 환영 메일 수신 이메일 |
+| `memberName` | string | ✓ | 수신자 이름 |
+
+```json
+{
+  "eventId": "b7d4e1f2-0000-0000-0000-000000000005",
+  "occurredAt": "2026-06-14T05:00:00Z",
+  "memberId": 101,
+  "memberEmail": "welcome@example.com",
+  "memberName": "신규회원"
+}
+```
+
 ## ShippingStartedEvent (topic: `shipping-started`)
 
 > **020 배송 단위 개정**: `shipmentId`(long) + `items[]`(productId·productName·quantity) 추가.

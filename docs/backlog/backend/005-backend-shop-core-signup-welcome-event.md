@@ -1,6 +1,7 @@
 # (backlog) 회원가입 Welcome 알림 이벤트 발행
 
-> 상태: backlog (미착수)
+> 상태: **승격 완료 → Task 028** (`docs/tasks/backend/028-backend-shop-core-signup-welcome-event-with-notification.md`) — `MemberRegisteredEvent`(topic `member-registered`) 계약 + shop-core Outbox 발행 + notification 구독·발송으로 명세화.
+> (이하 원본 backlog 내용 — 명세는 Task 028을 따른다)
 > 영역: shop-core (backend / member·event·messaging) → notification 소비
 > 출처: Task 007 범위 밖 — "회원가입 도메인 이벤트 발행(Welcome 알림 등)은 이벤트 계약 변경 금지로 후속"
 
