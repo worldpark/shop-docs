@@ -28,8 +28,10 @@
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `eventId` | UUID(string) | 이벤트 고유 식별자. 컨슈머 멱등 키 |
-| `occurredAt` | string(ISO-8601, UTC) | 이벤트 발생 시각 |
+| `occurredAt` | string(ISO-8601, KST +09:00) | 이벤트 발생 시각 |
 
+> **시각 표기 규약(ADR-009)**: 모든 시각 필드는 **KST 오프셋 ISO-8601**(`+09:00`, 예: `2026-06-15T14:30:00+09:00`)로 직렬화한다. 이전 UTC(`...Z`) 표기와 **동일 절대시각**이며, `Instant`로 역직렬화하는 컨슈머는 변경 없이 같은 시각으로 수신한다(오프셋 흡수). 저장값은 `timestamptz`로 절대시각 보존, 표현만 KST.
+>
 > 페이로드는 **자족적**으로 구성한다(컨슈머가 shop-core를 재조회하지 않도록). 알림 발송에 필요한 수신자 정보(`memberEmail`, `memberName` 등)를 페이로드에 포함한다.
 > 토픽 이름은 kebab-case, 이벤트 타입은 PascalCase 클래스명을 쓴다.
 
@@ -56,7 +58,7 @@
 ```json
 {
   "eventId": "9f1c2e3a-...",
-  "occurredAt": "2026-06-03T04:21:00Z",
+  "occurredAt": "2026-06-03T13:21:00+09:00",
   "orderId": 1024,
   "orderNumber": "ORD-20260603-001024",
   "memberId": 77,
@@ -67,7 +69,7 @@
   ],
   "totalAmount": 78000,
   "currency": "KRW",
-  "orderedAt": "2026-06-03T04:21:00Z"
+  "orderedAt": "2026-06-03T13:21:00+09:00"
 }
 ```
 
@@ -91,7 +93,7 @@
 ```json
 {
   "eventId": "1a2b3c4d-...",
-  "occurredAt": "2026-06-03T04:25:10Z",
+  "occurredAt": "2026-06-03T13:25:10+09:00",
   "orderId": 1025,
   "orderNumber": "ORD-20260603-001025",
   "memberId": 78,
@@ -101,7 +103,7 @@
   "currency": "KRW",
   "failureCode": "INSUFFICIENT_FUNDS",
   "failureReason": "한도 초과로 결제가 거절되었습니다.",
-  "attemptedAt": "2026-06-03T04:25:09Z"
+  "attemptedAt": "2026-06-03T13:25:09+09:00"
 }
 ```
 
@@ -128,7 +130,7 @@
 ```json
 {
   "eventId": "a1b2c3d4-...",
-  "occurredAt": "2026-06-10T10:00:00Z",
+  "occurredAt": "2026-06-10T19:00:00+09:00",
   "orderId": 1024,
   "orderNumber": "ORD-20260610-001024",
   "memberId": 77,
@@ -140,7 +142,7 @@
   "refunded": true,
   "refundedAmount": 78000,
   "currency": "KRW",
-  "cancelledAt": "2026-06-10T10:00:00Z"
+  "cancelledAt": "2026-06-10T19:00:00+09:00"
 }
 ```
 
@@ -149,7 +151,7 @@
 | 필드 | 타입 | 필수 | 설명 |
 |---|---|---|---|
 | `eventId` | UUID | ✓ | 공통 봉투(멱등 키) |
-| `occurredAt` | ISO-8601(UTC) | ✓ | 공통 봉투(발행 시각 — `Instant.now()`, 커밋 직전) |
+| `occurredAt` | ISO-8601(KST +09:00) | ✓ | 공통 봉투(발행 시각 — `Instant.now()`, 커밋 직전) |
 | `memberId` | long | ✓ | 회원 PK |
 | `memberEmail` | string | ✓ | 환영 메일 수신 이메일 |
 | `memberName` | string | ✓ | 수신자 이름 |
@@ -157,7 +159,7 @@
 ```json
 {
   "eventId": "b7d4e1f2-0000-0000-0000-000000000005",
-  "occurredAt": "2026-06-14T05:00:00Z",
+  "occurredAt": "2026-06-14T14:00:00+09:00",
   "memberId": 101,
   "memberEmail": "welcome@example.com",
   "memberName": "신규회원"
@@ -177,22 +179,22 @@
 | 필드 | 타입 | 필수 | 설명 |
 |---|---|---|---|
 | `eventId` | UUID | ✓ | 공통 봉투(멱등 키) |
-| `occurredAt` | ISO-8601(UTC) | ✓ | 공통 봉투(발행 시각) |
+| `occurredAt` | ISO-8601(KST +09:00) | ✓ | 공통 봉투(발행 시각) |
 | `memberId` | long | ✓ | 회원 PK |
 | `memberEmail` | string | ✓ | 재설정 메일 수신 이메일 |
 | `memberName` | string | ✓ | 수신자 이름 |
 | `resetUrl` | string | ✓ | 비밀번호 재설정 링크(토큰 포함, 메일 전달 목적 한정) |
-| `expiresAt` | ISO-8601(UTC) | ✓ | 토큰 만료 시각(발행 시각 + 30분) |
+| `expiresAt` | ISO-8601(KST +09:00) | ✓ | 토큰 만료 시각(발행 시각 + 30분) |
 
 ```json
 {
   "eventId": "c3d4e5f6-0000-0000-0000-000000000006",
-  "occurredAt": "2026-06-14T10:00:00Z",
+  "occurredAt": "2026-06-14T19:00:00+09:00",
   "memberId": 102,
   "memberEmail": "user@example.com",
   "memberName": "홍길동",
   "resetUrl": "http://localhost:8080/password-reset/confirm?token=a1b2c3d4e5f6...",
-  "expiresAt": "2026-06-14T10:30:00Z"
+  "expiresAt": "2026-06-14T19:30:00+09:00"
 }
 ```
 
@@ -223,7 +225,7 @@
 ```json
 {
   "eventId": "5e6f7a8b-...",
-  "occurredAt": "2026-06-03T09:00:00Z",
+  "occurredAt": "2026-06-03T18:00:00+09:00",
   "orderId": 1024,
   "orderNumber": "ORD-20260603-001024",
   "shipmentId": 55,
@@ -235,6 +237,6 @@
   "items": [
     { "productId": 5, "productName": "무선 키보드", "quantity": 2 }
   ],
-  "shippedAt": "2026-06-03T09:00:00Z"
+  "shippedAt": "2026-06-03T18:00:00+09:00"
 }
 ```
