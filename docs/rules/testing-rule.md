@@ -32,6 +32,7 @@
 
 ## 검증 실행
 - 변경한 프로젝트에서 `./gradlew test` 전체 통과를 확인한다.
+- **JPA Entity 신설·컬럼/타입 변경·Flyway 마이그레이션 추가가 있으면, 전체 스위트보다 먼저 스키마 매핑 전용 테스트를 단독 실행**해 정합을 격리한다(`docs/rules/schema-mapping-validation-rule.md`). `ddl-auto=validate`라 매핑 불일치는 entityManagerFactory 전체를 깨 무관한 통합 테스트까지 대량 실패시킨다.
 - 인프라(DB/Kafka/Redis)가 필요한 실동작은 가능하면 로컬 docker-compose로 수동 확인하고, 확인/미확인 항목을 작업 보고에 남긴다.
 - 브라우저 E2E(`./gradlew e2eTest`)는 `check`/`test`에 포함되지 않는 **별도 태스크**다(실행 중인 앱 필요 — 일반 `test`의 인프라 비의존 원칙 보존). 실행/판정은 `e2e-runner` 에이전트 또는 CI 스텝이 담당한다.
 
