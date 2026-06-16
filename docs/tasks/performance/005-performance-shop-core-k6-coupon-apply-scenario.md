@@ -12,6 +12,12 @@
 ## 배경
 - 쿠폰 적용/주문 할인은 **쿠폰 사용 한도·단일 사용(userCoupon) 직렬화**가 걸리는 경로다(로드맵 §6 3순위). 부하 하에서 **중복 사용 방지 경로의 경합(락/조건부 update)**이 본 시나리오의 관측 대상이다.
 - 주문 생성 요청이 `userCouponId`(선택)를 받는다(Task 001 계약 실사). 따라서 쿠폰 적용은 **order-create에 쿠폰을 실어** 일어난다.
+- **동시성 메커니즘(실사)**: 비관적 락이 아니라 **조건부 UPDATE**다 — 단일 사용은 `markUsedIfUnused`(`usedAt IS NULL`일 때만 1행), 한도는 `incrementUsedCountIfWithinLimit`(`used_count < usage_limit`일 때만 1행). 영향행 0 → 패자 → **409 `CouponConflictException`**. 이게 "중복 사용 방지 직렬화"의 실체다.
+- **쿠폰은 소비성(중요)**: userCoupon은 한 번 사용하면 `usedAt`이 박혀 재사용 불가(이후 409). 1인1매(UNIQUE(user_id,coupon_id))라 한 buyer는 한 쿠폰을 1회만 발급. 따라서 **지속 부하로 "성공 경로"를 반복 가압하기 어렵다** → 본 Task는 *경합/충돌 직렬화의 블랙박스 정상성*(409 깨끗·5xx 0·정확히 1회 사용)에 초점을 둔다(아래 Scope·plan).
+
+## 운영 안전 전제 (필수 — 2026-06-16 세션 사고 교훈)
+- **notification은 `log` 모드이거나 정지여야 한다(실 SMTP 금지).** 시드 signup → 환영 메일, PENDING 주문 만료 자동취소 → 취소 메일이 발생한다(002/003에서 order-cancelled 6,705건 누적 사례). smtp + 실 Gmail이면 대량발송 차단 사고 재현. `NOTIFICATION_MAIL_MODE=log`(현재 기본 log) + actuator mail health off 확인. (메모리 "perf 테스트 시 notification은 log 모드")
+- **베이스라인은 깨끗한 DB에서 측정**(누적 주문 열화 방지). 측정 전 테스트 주문/장바구니 TRUNCATE(메인 수행).
 
 ## Target
 `shop-core/perf/k6/scenarios/coupon-apply.js`(신규) + `lib/seed.js`에 쿠폰/발급 시드 보강. **앱 코드·빌드 무변경**(기존 admin/coupon API만 호출).
