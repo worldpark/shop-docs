@@ -4,7 +4,8 @@
 - 메인 오케스트레이션(작업 분해, 서브에이전트 호출, 결과 취합, 최종 보고)은 반드시 메인 에이전트가 수행한다.
 - 서브에이전트는 자신의 단일 책임만 수행하며 다른 서브에이전트를 직접 호출하지 않는다.
 - 구현 단계는 `backend-implementor`(Spring Boot 백엔드)와 `view-implementor`(Thymeleaf 화면)로 분리한다.
-- 메인 에이전트가 plan을 기준으로 작업을 배분하고, 두 에이전트 간 인터페이스(모델 키, Service 시그니처, 폼 DTO)를 정합한다.
+- 부하/성능(k6) 작업은 `k6-implementor`가 담당한다(`shop-core/perf/k6/**` JS 스크립트). k6는 떠 있는 앱을 외부에서 가압하는 블랙박스 자산이라 `./gradlew test` 게이트 밖이며(머지 비차단), 애플리케이션 Java 코드·`build.gradle`을 수정하지 않는다. 검증은 메인의 풀 스위트가 아니라 **k6-implementor의 smoke 실제 실행(pass/fail)** 으로 한다(브라우저 E2E 실행 전담 `e2e-runner`와 구별 — k6-implementor는 스크립트 구현+smoke 검증).
+- 메인 에이전트가 plan을 기준으로 작업을 배분하고, 구현 에이전트 간 인터페이스(모델 키, Service 시그니처, 폼 DTO, k6가 호출하는 REST 엔드포인트·요청 스키마)를 정합한다.
 - 한 Task에 백엔드와 화면이 모두 필요하면 백엔드 -> 화면 순으로 호출한다. Service와 DTO가 먼저 정의되어야 화면이 안정적으로 바인딩된다.
 - `reviewer -> fixer` 사이클은 한 Task당 최대 3회로 제한한다.
 - 3회 안에 `reviewer`가 PASS를 내지 않으면 메인 에이전트가 사이클을 중단하고 남은 FAIL 항목을 사용자에게 보고한다.
