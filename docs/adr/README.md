@@ -12,3 +12,5 @@
 | [ADR-006](006-object-storage-key-and-local-first-assets.md) | Accepted | 정적 자산은 storage key만 저장하고 `ObjectStorage` 뒤에 둔다. |
 | [ADR-007](007-flyway-owned-schema-hibernate-validate.md) | Accepted | DB 스키마 생성과 변경은 Flyway가 소유하고, Hibernate는 `ddl-auto=validate`로 검증만 수행한다. |
 | [ADR-008](008-playwright-java-e2e-external-app-target.md) | Accepted | E2E 테스트는 Playwright for Java와 외부 앱 타겟 방식으로 구성한다. |
+| [ADR-009](009-system-wide-kst-timezone.md) | Accepted | 시스템 전역 시간대를 KST로 통일한다. |
+| [ADR-010](010-actuator-micrometer-observability-resilience4j-core-retained.md) | Accepted | Actuator + Micrometer로 관측성을 도입하되, resilience4j는 코어를 유지하고 `resilience4j-micrometer` 바인더로 메트릭만 익스포트한다(자동설정 스타터 미전환). |
