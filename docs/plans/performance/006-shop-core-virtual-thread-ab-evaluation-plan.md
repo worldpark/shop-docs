@@ -44,11 +44,21 @@ public class VirtualThreadConfig {
 ### 2.4 고동시성 프로파일
 플랫폼 스레드 200을 넘겨 큐잉시키는 동시성. 전용 `vthread` 프로파일(constant-arrival-rate 고 rate + maxVUs 수백) 또는 stress 재사용. plan 측정 단계에서 동시성 스윕(예 100→300→500 동시).
 
-## 3. A/B 측정 (메인 + 사용자 협조)
-앱은 사용자 IDE 호스트 프로세스라 **사용자가 토글 기동**한다:
-1. **미도입 런**: 앱 기동(기본, VT off) + `SHOP_CORE_HIKARI_MAX_POOL=80`. 메인이 깨끗한 DB + notification 정지 후 (a)쓰기·(b)읽기 워크로드 각 다회 k6 → baseline.
-2. **도입 런**: 앱 재기동 `-Dshop.threads.virtual.enabled=true` + 같은 풀. 동일 워크로드 다회 k6 → baseline.
-3. **비교표**: throughput(달성/s)·http_req_duration p95/p99·dropped·에러율 + **서버측(Grafana/Prometheus)**: 활성 스레드 수(플랫폼 200 캡 vs VT), `hikaricp_connections_active/pending`, `http_server_requests` p95, JVM. 스레드 수·pending로 **병목이 스레드인지 풀인지** 규명.
+## 3. A/B 측정 — 3단 풀 × (플랫폼/VT) 매트릭스 (메인 + 사용자 협조)
+"풀을 늘리면 VT가 이기나?"를 직접 반증/확증한다. **읽기 경로(catalog-read)가 풀을 가장 깨끗이 가압**(락 없음, 동시 DB 읽기 = 풀 점유)하므로 주 측정은 읽기로, 쓰기(다중 variant)는 보조.
+
+**매트릭스** (각 셀 = 같은 고동시성 워크로드, 깨끗한 DB, 다회):
+
+| 풀 크기 | 플랫폼 스레드 | VT (`-Dshop.threads.virtual.enabled=true`) | 가설 |
+|---|---|---|---|
+| **10**(현행) | 측정 | 측정 | 풀이 캡 → **VT≈플랫폼**, 스레드 수 200 근처도 안 감 |
+| **50**(건강 범위) | 측정 | 측정 | throughput **↑ (둘 다 동등)** — 풀 튜닝 이득은 공유, VT 우위 없음 |
+| **250**(+PG max_connections 상향) | 측정 | 측정 | DB 과부하로 **저하** — 과한 풀의 역효과 |
+
+- 풀은 `SHOP_CORE_HIKARI_MAX_POOL`로, 250 셀은 docker-compose PG `-c max_connections=300`(측정용, 본 Task 비범위지만 이 셀만 임시) 필요.
+- **앱 토글 기동은 사용자(IDE 호스트 프로세스)**: 풀 환경변수 + VT 플래그 조합으로 각 셀마다 재기동 → 메인이 그 사이 k6 실행. notification은 측정 내내 **정지/log**.
+- **비교/규명 지표**: throughput(달성 req/s)·p95/p99·dropped·에러율 + **서버측(Grafana/Prometheus 배선됨)**: 활성 스레드 수(플랫폼 200 캡 도달 여부 vs VT), `hikaricp_connections_active/pending`(풀이 캡인지), `http_server_requests` p95, JVM/GC.
+- **결론 도출**: 위 매트릭스로 "**풀이 throughput 지렛대, VT는 DB 바운드에선 무관**"을 데이터로 확정. 어느 셀에서도 스레드가 200 캡에 안 닿고 pending이 풀에서 쌓이면 → "스레드 모델 무관, 풀/DB가 천장" 입증.
 
 ## 4. 검증
 - VT 빈 조건부(미설정 시 미생성) — 풀 스위트 그린(설정 추가 무해), `-Dshop.threads.virtual.enabled=true` 기동 시 요청 스레드명이 `VirtualThread...`(로그/액추에이터 thread dump)로 확인.
