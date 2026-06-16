@@ -22,6 +22,15 @@
   - 자동설정 제외는 운영 구현체가 테스트에서 절대 생성되지 않게 만들어 거짓 통과를 유발한다.
   - 대안: 지연 연결(예: Lettuce는 첫 명령 시 연결)을 활용해 빈은 생성하되 연결만 미루거나, 동작만 fake로 교체한다.
 
+### 풀 컨텍스트 @SpringBootTest의 Repository mock 중앙화 — `@MockSharedRepositories`
+> 배경/실증: `docs/plans/revisions/backend/034-backend-shop-core-inventory-stock-adjustment-ledger-revision-1.md`(`InventoryStockPortImpl`에 `StockLedgerRepository` 의존을 추가하자 풀 컨텍스트 테스트 63개가 연쇄 실패 — 705 failures).
+
+- 보안/뷰/컨트롤러 테스트는 풀 `@SpringBootTest + @ActiveProfiles("test")`로 실 DB 없이 **모든 Repository를 `@MockitoBean`으로 주입**한다(test 프로파일이 JPA 자동설정 제외).
+- 그래서 **여러 모듈이 의존하는 published-port 구현 서비스(예: `InventoryStockPortImpl`)에 새 Repository 의존을 추가하면**, 그 서비스를 로드하는 풀 컨텍스트 테스트가 그 repo를 mock하지 않아 일제히 `UnsatisfiedDependency → No qualifying bean` → 컨텍스트 로드 실패(연쇄)한다. **타깃 테스트만으로는 못 잡고 전체 `./gradlew test`에서만 드러난다.**
+- 그런 **"빈 그래프 충족용(개별 테스트가 stub하지 않는)" Repository는 `com.shop.shop.support.MockSharedRepositories`**(클래스 레벨 `@MockitoBean(types=...)` 합성 애노테이션, Spring Framework 6.2+) 한 곳에 모은다. 새 동종 repo 추가 시 **이 애노테이션 `types`만** 갱신하면 적용된 모든 테스트에 반영된다(개별 테스트 무수정 → 재발 차단).
+- 단, 특정 repo를 **stub**해야 하는 테스트는 그 타입을 애노테이션에 넣지 말고 종전대로 **필드 `@MockitoBean`**으로 선언한다(같은 타입 이중 override 충돌 방지). 실 DB(Testcontainers) 통합 테스트는 실 repo를 쓰므로 애노테이션 대상이 아니다.
+- 핵심 서비스에 repo 의존을 추가·변경했으면 **전체 게이트로 풀 컨텍스트 영향까지 확인**한다(아래 "검증 실행"의 전체 통과 연장).
+
 ## 컨텍스트/배선 검증
 - 필터·컨트롤러·서비스의 주입 의존이 운영에서 모두 해결되는지, "운영과 동일한 컴포넌트 스캔 + 자동설정" 컨텍스트 테스트로 확인한다.
 - `@ConditionalOnBean` / `@ConditionalOnProperty` 등 조건부 빈은 테스트에서 조건이 충족되는 경로를 최소 1개 검증한다(조건이 항상 거짓이면 그 빈은 테스트 대상에서 사라진다).
