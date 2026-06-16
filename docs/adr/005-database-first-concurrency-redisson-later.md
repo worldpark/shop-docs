@@ -30,9 +30,20 @@
 
 Redisson 분산락은 배제하지 않는다. 향후 다중 노드 배포 단계에서 동일 도메인 자원에 대한 노드 간 경합을 직렬화하기 위해 도입한다.
 
+**2026-06-16 갱신(Task 035)**: 사용자 결정으로 다중 노드 배포 채택. 이에 따라 분산락=Redisson을 도입하되
+적용 범위는 **스케줄러 리더 실행에 한정**한다(Task 035).
+- `UnpaidOrderExpiryScheduler.expireUnpaidOrders()`에 `SchedulerLeaderGuard.runIfLeader` 게이트 적용.
+- 도메인 행 락(`VariantStock`/`Order` `SELECT ... FOR UPDATE`)에는 Redisson을 덧씌우지 않는다
+  (단일 PostgreSQL로 이미 노드 간 직렬화 — 이중 락·데드락 위험).
+- 목적은 strict 단일 실행이 아니라 **다중 노드 중복 작업 축소(best-effort)**.
+  정합은 도메인 행 락=멱등이 보장하므로 락 게이트 실패 시에도 정합이 깨지지 않는다.
+- 구현: `plain org.redisson:redisson:3.50.0`(starter 금지), `RedissonClient` 별도 빈,
+  `common.concurrency.SchedulerLeaderGuard` 인터페이스 + `RedissonSchedulerLeaderGuard` 구현.
+
 Redisson 도입 후보는 다음과 같다.
 
 - 다중 노드에서 같은 자원을 동시에 처리하는 scheduler 또는 consumer
+  → **Task 035에서 `UnpaidOrderExpiryScheduler` 적용 완료**
 - DB 단일 row lock으로 표현하기 어려운 집합 단위 자원
 - 상품 이미지 개수 상한처럼 check-then-act race가 존재하는 기능
 - 쿠폰 총 발급/사용 한도처럼 자원 key 단위 직렬화가 필요한 기능
@@ -41,6 +52,9 @@ Redisson 도입 후보는 다음과 같다.
 Redisson 도입 후에도 DB 제약과 상태 검증은 최종 정합성 방어선으로 유지한다. Redisson은 직렬화 수단이지 최종 정합성 근거가 아니다.
 
 ## 결과
+
+**2026-06-16 갱신(Task 035)**: Task 035로 Redisson 스케줄러 리더 게이트 구현 완료.
+`docs/backlog/backend/007-backend-shop-core-distributed-lock.md`의 "scheduler" 항목이 본 Task로 소화됨.
 
 긍정적 결과:
 
