@@ -1,29 +1,33 @@
-# 047. HikariCP 커넥션 풀 기본값 상향 (10 → 측정 확정값)
+# 047. HikariCP 커넥션 풀 right-size + 설정 드리프트 정렬 (레포 10 / 런타임 100 → ~30)
 
-> 출처: `docs/report/performance/003-order-create-saturation-bottleneck.md` §5-1(권고). 분산 order-create 고RPS에서 **기본 풀 10이 풀-바운드**(hikari pending 평균 93·app CPU 19%)로 측정됨. 풀 10→30 처리량 **실측 +15%(150→173/s)**.
+> 출처: `docs/report/performance/003-order-create-saturation-bottleneck.md` §5-1(권고). 분산 order-create 고RPS 풀 스윕에서 **피크는 ~30~50(~174/s)**, **레포 기본 10은 풀-바운드(과소, -15%)**, **런타임 100은 과대(피크보다 ~5% 낮고 PG 고갈 위험)**.
 > 관련: backlog 3순위(`docs/backlog/performance/001-...`), 측정 하니스 Task 008.
 
-## 배경 (측정 확정)
-- report 003 풀 스윕(분산 N=50, →600rps): 풀 10은 hikari **pending 평균 93·최대 189**인데 **app CPU 19%** → 앱은 노는데 커넥션이 없어 막힌 **풀-바운드**. 풀 30으로 키우면 처리량 150→173/s(+15%), dropped 96→74/s, pending 93→75로 개선. **풀 30→50은 평탄(~174/s)** — 그 위는 머신(PG CPU 공유) 한계.
-- 현재 `application.yml`: `maximum-pool-size: ${SHOP_CORE_HIKARI_MAX_POOL:10}`. **기본 10은 의도적 "측정 가드"**(커밋 "hikari 풀 기본값 10 복원 + VT 토글 기본 off")였다 — 측정 환경 통제용. 본 Task는 **측정이 끝났으니 운영 기본값을 실측 근거로 상향**한다.
+## 배경 (측정 확정 — 곡선)
+- report 003 풀 스윕(분산 N=50, →600rps, 셀당 1런): **10:150 → 30:173 → 50:174(피크) → 80:171.5 → 100:165** orders/s. 즉 **10→30 급상승(+15%), 30~50 피크, 50→100 완만 하락**. 풀을 무작정 키우면 PG 동시 트랜잭션 경합으로 **역효과**(100: dropped↑·p95↑·proc_cpu 0.9 스파이크, throughput은 오히려 ↓).
+- **두 개의 드리프트**가 공존한다(둘 다 부적정):
+  - 레포 `application.yml` 기본값 **10**(`${SHOP_CORE_HIKARI_MAX_POOL:10}`) — 의도적 "측정 가드"였으나 운영엔 과소(풀-바운드).
+  - 런타임 오버라이드 **100**(`SHOP_CORE_HIKARI_MAX_POOL=100`, 실행 환경에서 주입 — 레포에 없음) — 과대. throughput 이득 0 + **PG `max_connections=100`** 단일 인스턴스 점유·멀티 인스턴스 초과(측정 중 `too many clients already` 실증).
+- 적정값은 **~30**(피크 근처 + 멀티 인스턴스 안전: 3×30=90<100).
 
 ## Target / Goal
-`application.yml`의 HikariCP `maximum-pool-size` **운영 기본값을 10 → 측정 확정값(후보 20 또는 30)**으로 올린다. env(`SHOP_CORE_HIKARI_MAX_POOL`) 오버라이드는 유지(측정·환경별 조정 가능). 목적은 고RPS write 경로의 풀-바운드 해소로 처리량을 회복하는 것.
+HikariCP `maximum-pool-size`를 **레포 기본값(10)과 런타임 오버라이드(100) 양쪽 드리프트를 ~30으로 정렬**한다. "상향"이 아니라 **right-size**: 10은 올리고 100은 내려, 피크 처리량 + PG 안전을 동시 확보. env(`SHOP_CORE_HIKARI_MAX_POOL`) 오버라이드 메커니즘은 유지(환경별 조정 가능)하되, **운영 기본을 ~30으로 두고 100 오버라이드는 제거**한다.
 
 ## 범위 (Scope)
 ### 값 확정 (측정 — 코드 변경 전)
-- 후보 풀 **10 vs 20 vs 30**을 saturate(N=50, →600rps) 또는 load로 **각 3런** 측정(단발 변동 ±10~30% 배제 — report 001 §7, [[k6-perf-baseline-needs-clean-db]]). report 003은 셀당 1런이라 운영값 확정 전 다회로 굳힌다.
-- 선정 기준: 처리량 이득이 **유의(3런 분포 비중첩)**하면서 **수확 체감 직전** + 커넥션 비용. report 003 추세상 **20~30 구간**(10→30 큰 이득, 30→50 평탄). 보수적이면 20, 이득 우선이면 30.
+- 후보 풀 **20 vs 30 (vs 50)**을 saturate(N=50, →600rps)로 **각 3런** 측정(단발 변동 ±10~30% 배제 — report 001 §7, [[k6-perf-baseline-needs-clean-db]]). report 003은 셀당 1런이라 운영값 확정 전 다회로 굳힌다.
+- 선정 기준: 피크 처리량(30~50) + **멀티 인스턴스 PG 안전**(인스턴스 수 × 풀 < 100). 보수적·안전 우선이면 **30**(3인스턴스 90), 인스턴스 1~2개 확정이면 50까지 허용. **100은 후보 아님(과대·역효과·PG 위험 — 실측 확정).**
 
 ### 설정 변경 (backend-implementor)
-- `application.yml` `maximum-pool-size` 기본값을 확정값으로(`${SHOP_CORE_HIKARI_MAX_POOL:20}` 등). env 플레이스홀더·오버라이드 유지.
-- 주석 갱신: "측정 가드 10"이 아니라 "report 003 실측 기반 운영 기본값"임을 명시. 변경 근거(리포트 경로) 1줄.
+- `application.yml` `maximum-pool-size` 기본값을 확정값으로(`${SHOP_CORE_HIKARI_MAX_POOL:30}` 등). env 플레이스홀더·오버라이드 메커니즘 유지.
+- 주석 갱신: "측정 가드 10"이 아니라 "report 003 실측 기반 운영 기본값(피크 ~30)"임을 명시. 변경 근거(리포트 경로) 1줄.
+- **런타임 100 오버라이드 제거**: 배포/실행 환경의 `SHOP_CORE_HIKARI_MAX_POOL=100`을 제거(또는 ~30으로)하도록 배포 문서/체크리스트에 명시(이건 레포 코드가 아닌 운영 설정 — 정렬 누락 시 기본값 변경이 무의미).
 
 ### PG 정합 (필수 점검)
-- PostgreSQL `max_connections`(기본 100) 대비 **(앱 인스턴스 수) × (풀 크기) + 여유**가 한도 내인지 점검. 다중 인스턴스 배포 시 풀 30이면 3인스턴스=90 → 여유 부족 가능. 운영 인스턴스 수 전제를 문서/주석에 명시(단일~소수 전제면 20~30 안전).
+- PostgreSQL `max_connections`(=100, 확정) 대비 **(앱 인스턴스 수) × (풀 크기) + 여유**가 한도 내인지 점검. 풀 30이면 3인스턴스=90 안전, 100이면 1인스턴스로도 위험. 운영 인스턴스 수 전제를 문서/주석에 명시.
 
 ## Non-goals
-- **전용 perf 환경 재측정** — report 003 §5-2(머신 CPU 공유로 ~174/s 천장은 비대표적). 별도 task. 본 Task는 "풀 10이 과소"라는 명확한 부분만 교정(전체 용량 산정 아님).
+- **전용 perf 환경 재측정** — report 003 §5-2(머신 CPU 공유로 ~174/s 천장은 비대표적). 별도 task. 본 Task는 "10 과소·100 과대"를 ~30으로 정렬하는 것(전체 용량 산정 아님).
 - 락 창 단축(backlog 1순위)·조건부 UPDATE(2순위)·아키텍처(4순위) — 일반 트래픽 병목 아님(report 002·003).
 - PG `max_connections` 자체 상향 — 인프라 변경, 별도. 본 Task는 풀을 PG 한도 내로.
 - 가상스레드 — throughput 지렛대 아님(report 001).
