@@ -14,7 +14,7 @@
 
 ## 범위 (Scope)
 ### 1. 판매자 배송 service (소유권 스코핑 + 그루핑 + seller_id)
-- `OrderFulfillmentService`(또는 판매자 전용 경로)에 **판매자 스코핑 배송 생성**: 대상 orderItem을 **요청 판매자 owner_id 것으로 제한**(Phase 1 스냅샷 `order_item.owner_id` 사용 — 런타임 조인 불요). 타 판매자 항목 지정 시 403/400(소유권 위반).
+- `OrderFulfillmentService`(또는 판매자 전용 경로)에 **판매자 스코핑 배송 생성**: 대상 orderItem을 **요청 판매자 owner_id 것으로 제한**(Phase 1 스냅샷 `order_item.owner_id` 사용 — 런타임 조인 불요). 타 판매자/미존재 항목 지정 시 **404(존재 은닉 — ProductAccessDeniedException·Phase 1 조용한 필터와 정합. plan 049 §1.5)**.
   - 미지정(전부) 시: **해당 판매자의 미발송 항목 전부**로 배송 1건(판매자별 그루핑 자연 성립 — 한 배송=한 판매자).
   - `Shipment.seller_id`를 **요청 판매자 id로 스탬프**(admin이 만든 기존 경로와 구분·집계 가능).
 - **판매자 배송 시작/완료**: 대상 shipment의 `seller_id == 요청 판매자` 검증 후 `ship`/`deliver`(기존 `OrderFulfillmentService` 전이·이벤트 재사용). 타 판매자 shipment 조작 차단.
@@ -33,7 +33,7 @@
 - 새 통계/대시보드 지표 — 비범위.
 
 ## 검증
-- **소유권 매트릭스**(핵심): 판매자A는 자기 항목만 배송 생성/시작/완료. **타 판매자 항목 지정→403/400, 타 판매자 shipment ship/deliver→403**. 비SELLER→401/403. ADMIN은 전체 가능(감독).
+- **소유권 매트릭스**(핵심): 판매자A는 자기 항목만 배송 생성/시작/완료. **타 판매자/미존재 항목 지정→404, 타 판매자·seller_id=null(admin) shipment ship/deliver→404(존재 은닉)**. 비SELLER→401/403(권한). ADMIN은 전체 가능(감독). (409는 "만들 배송 없음" 등 상태충돌 전용 — 소유권 위반 아님.)
 - **멀티셀러 주문**: 판매자A·B 상품이 섞인 주문에서 각자 자기 항목만 배송 1건씩 생성(seller_id 각자 스탬프), 서로 간섭 없음(부분 배송).
 - **상태 롤업 재사용 확인**: A·B 모두 deliver해야 order delivered(기존 deliver-when-all 로직이 판매자 경로에서도 성립) — 통합.
 - **브라우저 E2E 필수**: SELLER 로그인→/seller/orders→자기 항목 배송 생성→시작(택배사·운송장)→완료, 타 판매자 항목 비노출·조작 불가([[verify-admin-list-page-features-with-e2e]]).
