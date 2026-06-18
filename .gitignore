@@ -19,6 +19,8 @@ Thumbs.db
 docker/shop/.env
 # 운영 시크릿 — KEK 파일(절대 커밋 금지)
 docker/shop/secrets/
+# Let's Encrypt 인증서/챌린지 bind mount 데이터(커밋 금지)
+docker/shop/certbot/
 
 # Build output (Gradle) — Playwright Java E2E 산출물(build/e2e-artifacts/) 포함
 build/
