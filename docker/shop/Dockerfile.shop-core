@@ -1,0 +1,34 @@
+# ============================================================
+# shop-core 멀티스테이지 빌드 (배포용)
+# 빌드 컨텍스트: shop-core 모듈 루트 (compose build.context=../../shop-core)
+# stage 1: Gradle 빌드(bootJar, 테스트 제외) → stage 2: JRE 런타임(비루트)
+# ============================================================
+
+# ---- stage 1: build ----
+FROM eclipse-temurin:21-jdk AS build
+WORKDIR /workspace
+
+# 의존성 캐시 레이어링: 빌드 스크립트 먼저 복사 → 소스 변경 시에도 의존성 캐시 재사용
+COPY gradlew settings.gradle build.gradle ./
+COPY gradle gradle
+RUN chmod +x gradlew && ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
+
+# 소스 복사 후 bootJar (단위/통합/E2E 테스트는 별도 게이트에서 — 이미지 빌드에서 제외)
+COPY src src
+RUN ./gradlew --no-daemon clean bootJar -x test -x e2eTest
+
+# ---- stage 2: runtime ----
+FROM eclipse-temurin:21-jre AS runtime
+WORKDIR /app
+
+# 비루트 유저(UID 1001) — KEK 마운트·uploads 볼륨 권한 정렬
+RUN groupadd -r app && useradd -r -g app -u 1001 appuser
+
+# 실행 가능 bootJar만 복사(plain 라이브러리 jar 제외: *-SNAPSHOT.jar 만 매칭)
+COPY --from=build /workspace/build/libs/*-SNAPSHOT.jar /app/app.jar
+
+USER appuser
+EXPOSE 8080
+
+# MaxRAMPercentage: 컨테이너 메모리 한계 인식(OOM 회피). 가상스레드 미활성(현 단계).
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-XX:+UseG1GC", "-jar", "/app/app.jar"]

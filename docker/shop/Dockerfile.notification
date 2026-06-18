@@ -1,0 +1,29 @@
+# ============================================================
+# notification 멀티스테이지 빌드 (배포용)
+# 빌드 컨텍스트: notification 모듈 루트 (compose build.context=../../notification)
+# Kafka 컨슈머 + 메일 발송. 외부 노출 없음(nginx 뒤 아님, 내부망 전용).
+# ============================================================
+
+# ---- stage 1: build ----
+FROM eclipse-temurin:21-jdk AS build
+WORKDIR /workspace
+
+COPY gradlew settings.gradle build.gradle ./
+COPY gradle gradle
+RUN chmod +x gradlew && ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
+
+COPY src src
+RUN ./gradlew --no-daemon clean bootJar -x test
+
+# ---- stage 2: runtime ----
+FROM eclipse-temurin:21-jre AS runtime
+WORKDIR /app
+
+RUN groupadd -r app && useradd -r -g app -u 1001 appuser
+
+COPY --from=build /workspace/build/libs/*-SNAPSHOT.jar /app/app.jar
+
+USER appuser
+EXPOSE 8090
+
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-XX:+UseG1GC", "-jar", "/app/app.jar"]
