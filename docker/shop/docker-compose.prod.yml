@@ -29,7 +29,7 @@ x-shop-core-common: &shop-core-common
     SERVER_FORWARD_HEADERS_STRATEGY: framework           # nginx TLS 종단 → X-Forwarded-* 인식(Secure 쿠키/https URL)
   volumes:
     - ./secrets/kek.b64:/run/secrets/kek.b64:ro          # KEK read-only(운영자 호스트 배치)
-    - shop-uploads:/app/uploads                          # 정적 자산 공유(멀티 인스턴스)
+    - prod-shop-uploads:/app/uploads                          # 정적 자산 공유(멀티 인스턴스)
   depends_on:
     shop-core-postgres:
       condition: service_healthy
@@ -159,8 +159,12 @@ services:
       POSTGRES_DB: ${SHOP_CORE_DB_NAME:-shop_core}
       POSTGRES_USER: ${SHOP_CORE_DB_USER:?set in .env}
       POSTGRES_PASSWORD: ${SHOP_CORE_DB_PASSWORD:?set in .env}
+    ports:
+      # 호스트 DB 툴 접속용. 기본은 127.0.0.1 바인딩(호스트 전용 — 외부망 비노출).
+      # 외부 노출이 필요하면 .env에 SHOP_CORE_DB_HOST_PORT=5432(0.0.0.0) 또는 0.0.0.0:5432 지정.
+      - "${SHOP_CORE_DB_HOST_PORT:-127.0.0.1:5432}:5432"
     volumes:
-      - shop-core-pg-data:/var/lib/postgresql/data
+      - prod-shop-core-pg-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${SHOP_CORE_DB_USER:-shop_core}", "-d", "${SHOP_CORE_DB_NAME:-shop_core}"]
       interval: 10s
@@ -179,8 +183,11 @@ services:
       POSTGRES_DB: ${NOTIFICATION_DB_NAME:-notification}
       POSTGRES_USER: ${NOTIFICATION_DB_USER:?set in .env}
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?set in .env}
+    ports:
+      # 호스트 DB 툴 접속용. 기본 127.0.0.1 바인딩(호스트 전용). 호스트 5433 → 컨테이너 5432.
+      - "${NOTIFICATION_DB_HOST_PORT:-127.0.0.1:5433}:5432"
     volumes:
-      - notification-pg-data:/var/lib/postgresql/data
+      - prod-notification-pg-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${NOTIFICATION_DB_USER:-notification}", "-d", "${NOTIFICATION_DB_NAME:-notification}"]
       interval: 10s
@@ -211,7 +218,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"            # 운영: 토픽 자동생성 비활성(명시 생성)
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
-      - kafka-data:/var/lib/kafka/data                    # 이벤트 로그 영속(운영)
+      - prod-kafka-data:/var/lib/kafka/data                    # 이벤트 로그 영속(운영)
     # 호스트 포트 미게시 — 내부망만(공격 표면 축소)
     restart: unless-stopped
     networks:
@@ -222,7 +229,7 @@ services:
     image: redis:${REDIS_IMAGE_TAG:-7.4-alpine}
     container_name: shop-redis
     volumes:
-      - shop-redis-data:/data
+      - prod-shop-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -234,15 +241,15 @@ services:
       - shop-net
 
 volumes:
-  shop-core-pg-data:
+  prod-shop-core-pg-data:
     driver: local
-  notification-pg-data:
+  prod-notification-pg-data:
     driver: local
-  shop-redis-data:
+  prod-shop-redis-data:
     driver: local
-  kafka-data:
+  prod-kafka-data:
     driver: local
-  shop-uploads:
+  prod-shop-uploads:
     driver: local
   # 인증서/webroot는 named 볼륨 대신 host bind mount(./certbot/conf, ./certbot/www) — 호스트 가시·백업 용이
 

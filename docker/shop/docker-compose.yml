@@ -32,7 +32,7 @@ services:
       start_period: 10s
     networks:
       - shop-net
-    restart: "no"  # 로컬 일회성 기동 — 자동 재시작 불필요
+    restart: unless-stopped  # Docker 시작 시 자동 기동(수동 docker stop은 존중)
 
   # ----------------------------------------------------------
   # notification 전용 PostgreSQL (호스트 5433 → 컨테이너 5432)
@@ -57,7 +57,7 @@ services:
       start_period: 10s
     networks:
       - shop-net
-    restart: "no"
+    restart: unless-stopped  # Docker 시작 시 자동 기동(수동 docker stop은 존중)
 
   # ----------------------------------------------------------
   # Kafka KRaft 단일 노드 (broker + controller 겸임)
@@ -104,7 +104,7 @@ services:
       # 9093(CONTROLLER), 29092(INTERNAL)은 컨테이너 네트워크 전용 — 호스트 미게시
     networks:
       - shop-net
-    restart: "no"
+    restart: unless-stopped  # Docker 시작 시 자동 기동(수동 docker stop은 존중)
 
   # ----------------------------------------------------------
   # Kafka UI 대시보드 (로컬 개발용)
@@ -124,7 +124,7 @@ services:
       - shop-kafka
     networks:
       - shop-net
-    restart: "no"
+    restart: unless-stopped  # Docker 시작 시 자동 기동(수동 docker stop은 존중)
 
   # ----------------------------------------------------------
   # Redis 단일 노드 (로컬 개발 전용)
@@ -147,7 +147,7 @@ services:
       start_period: 10s
     networks:
       - shop-net
-    restart: "no"  # 로컬 일회성 기동 — 자동 재시작 불필요
+    restart: unless-stopped  # Docker 시작 시 자동 기동(수동 docker stop은 존중)
 
 # ----------------------------------------------------------
 # Named Volumes (PostgreSQL 데이터 영속 + Redis 데이터 영속)
