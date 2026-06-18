@@ -31,7 +31,10 @@ $COMPOSE run --rm --entrypoint "sh -c \"\
     -subj '/CN=${SHOP_DOMAIN}'\"" shop-certbot
 
 echo "### 2) nginx 기동(80 챌린지 + 443 더미 인증서)"
-$COMPOSE up -d shop-nginx
+# --force-recreate: 직전 크래시 루프(인증서 부재) 컨테이너가 백오프 상태로 남아 있으면
+# 단순 up -d는 재생성하지 않아 80포트가 LISTEN되지 않는다. 그 상태로 certbot을 돌리면
+# ACME HTTP-01 챌린지가 Connection refused로 실패한다. 강제 재생성으로 80 서빙을 보장한다.
+$COMPOSE up -d --force-recreate shop-nginx
 
 echo "### 3) 더미 인증서 삭제 후 실 인증서 발급(webroot HTTP-01)"
 $COMPOSE run --rm --entrypoint "sh -c \"rm -rf ${CERT_PATH}\"" shop-certbot

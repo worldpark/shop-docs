@@ -1,6 +1,11 @@
-# 로컬 인프라 Docker Compose
+# shop Docker Compose (로컬 dev / 운영 배포)
 
-로컬 개발 환경 전용. 앱(shop-core, notification)은 IDE에서 직접 실행하고, 이 Compose는 인프라(PostgreSQL x2, Kafka x1)만 담당한다.
+이 디렉터리는 두 개의 Compose 파일을 둔다.
+
+- **`docker-compose.yml`** — 로컬 개발 전용. 앱(shop-core, notification)은 IDE에서 직접 실행하고, 이 Compose는 인프라(PostgreSQL x2, Kafka x1, Redis)만 담당한다. (아래 "기동 절차"부터)
+- **`docker-compose.prod.yml`** — 운영 단일 호스트 배포(nginx TLS 종단/LB + shop-core×2 + notification + 인프라 + certbot). ("운영 배포" 섹션 참고)
+
+아래 로컬 dev 절차 문서가 먼저 오고, 운영 배포 절차는 별도 섹션에 정리한다.
 
 ---
 
@@ -123,6 +128,89 @@ docker compose -f docker/shop/docker-compose.yml down -v
 2. `SHOP_CORE_DB_PORT`, `NOTIFICATION_DB_PORT`, `KAFKA_EXTERNAL_PORT` 변경
 3. **주의**: `KAFKA_EXTERNAL_PORT`를 변경하면 앱의 `bootstrap-servers` 설정도 함께 변경해야 함 (EXTERNAL advertised listener와 일치 필요)
 4. `docker compose ... up -d` 재실행
+
+---
+
+## 운영 배포 (docker-compose.prod.yml)
+
+> 위 절차는 **로컬 dev(`docker-compose.yml`) 전용**이다. 운영 단일 호스트 배포는 별 파일 `docker-compose.prod.yml`을 쓴다.
+> 구성: nginx(TLS 종단/LB) + shop-core×2(STATELESS JWT) + notification + 인프라(PG×2·Kafka·Redis) + certbot.
+> dev 스택과 **같은 호스트에서 동시 기동 금지**(컨테이너명/포트 충돌).
+
+### 사전 요구사항 (운영)
+
+- 호스트에 `docker/shop/.env` 작성 (`​.env.prod.example` 참고 — `SHOP_DOMAIN`, `LETSENCRYPT_EMAIL`, DB 자격증명, `SHOP_SECURITY_JWT_SECRET` 등). 커밋 금지.
+- `docker/shop/secrets/kek.b64` 배치 (Base64 AES-256 KEK). 커밋 금지.
+  - 생성 예: `head -c 32 /dev/urandom | base64 > docker/shop/secrets/kek.b64`
+- 앱 소스 레포가 형제 경로에 존재 (`../../shop-core`, `../../notification` — build context).
+- 도메인 DNS가 이 호스트의 공인 IP를 가리키고, **80/443 인바운드 개방** (Let's Encrypt HTTP-01 챌린지에 80 필수).
+
+### 최초 1회: TLS 인증서 부트스트랩
+
+nginx 443은 인증서 파일이 있어야 기동하므로(닭-달걀), 최초 발급은 전용 스크립트로 한다.
+
+```bash
+cd docker/shop
+chmod +x scripts/init-letsencrypt.sh
+./scripts/init-letsencrypt.sh           # 더미 인증서 → nginx 기동 → webroot 실 인증서 발급 → reload
+# 발급 테스트(레이트리밋 회피)는 STAGING=1 ./scripts/init-letsencrypt.sh
+```
+
+> **이미 발급된 뒤에는 재실행하지 말 것.** 재발급은 Let's Encrypt 레이트리밋만 소모한다.
+> 갱신은 `shop-certbot` 컨테이너(12h 루프)가 자동 처리한다.
+
+### 재빌드 & 배포 (반복 절차)
+
+작업 위치: `docker/shop/`
+
+```bash
+cd docker/shop
+
+# 1. 최신 소스 반영 (앱 레포는 별도 git)
+git -C ../../shop-core pull
+git -C ../../notification pull
+
+# 2. 재빌드 + 배포 (변경된 서비스만 재생성)
+docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+
+# 3. 상태 확인 (shop-core-1/2, shop-notification 이 healthy 여야 정상)
+docker compose -f docker-compose.prod.yml ps
+
+# 4. 로그 확인 (Flyway 마이그레이션 + 기동)
+docker compose -f docker-compose.prod.yml logs -f shop-core-1 shop-notification
+```
+
+- `up -d --build`는 빌드 섹션이 있는 `shop-core-1`·`shop-notification` 이미지를 다시 굽고, 변경된 컨테이너만 재생성한다. PG/Kafka/Redis/nginx/certbot 등 안 바뀐 건 그대로 유지된다.
+- `shop-core-2`는 build 없음 — `shop-core-1`이 구운 `shop-core:${SHOP_IMAGE_TAG}` 이미지를 재사용한다.
+- `--remove-orphans`: dev 스택 잔여 컨테이너(`shop-kafka-ui` 등)가 같은 프로젝트명으로 섞여 있으면 정리한다.
+
+### (선택) 무중단에 가까운 롤링 배포
+
+shop-core 두 인스턴스를 동시에 재생성하면 짧은 단절이 생긴다(nginx가 `max_fails`/`fail_timeout`로 우회하긴 함). 한 대씩 굴리면 단절을 줄인다.
+
+```bash
+# 이미지만 먼저 빌드 (컨테이너 교체 없음)
+docker compose -f docker-compose.prod.yml build shop-core-1
+
+# 한 대씩 새 이미지로 교체
+docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate shop-core-1
+#   shop-core-1 healthy 확인 후
+docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate shop-core-2
+```
+
+### 배포 검증 (운영)
+
+```bash
+# 앱 헬스
+docker compose -f docker-compose.prod.yml exec shop-core-1 wget -qO- http://localhost:8080/actuator/health
+
+# 외부 HTTPS (302 = 로그인 리다이렉트, 정상)
+curl -sk -o /dev/null -w "%{http_code}\n" https://${SHOP_DOMAIN:-kimjr.store}/
+
+# 인증서 발급자/만료 확인 (Let's Encrypt 여야 정상)
+echo | openssl s_client -connect localhost:443 -servername ${SHOP_DOMAIN:-kimjr.store} 2>/dev/null \
+  | openssl x509 -noout -issuer -dates
+```
 
 ---
 
