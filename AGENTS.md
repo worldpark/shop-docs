@@ -13,7 +13,7 @@
 - 모듈 구조 (shop-core): Spring Modulith
 - 메시징: Kafka (JSON 직렬화)
 - 빌드: Gradle (레포별 독립 빌드)
-- 테스트: JUnit 5 + Mockito
+- 테스트: JUnit 5 + Mockito (단위), Testcontainers (DB 통합), Playwright for Java (브라우저 E2E — `docs/plans/performance/001-e2e-playwright-java-test-strategy.md`)
 
 ## 작업 규칙
 세부 작업 규칙은 `docs/rules/*rule.md`를 따른다.
@@ -32,6 +32,8 @@ API를 추가하거나 변경할 때는 반드시 `docs/rules/api-authorization-
 - Docker 규칙: `docs/rules/docker-rule.md`
 - Task 수행 규칙: `docs/rules/task-rule.md`
 - 테스트 규칙: `docs/rules/testing-rule.md`
+- 스키마 매핑 검증 규칙(JPA Entity ↔ Flyway SQL 정합): `docs/rules/schema-mapping-validation-rule.md`
 - 서브에이전트 작업 규칙: `docs/rules/subagent-rule.md`
+- 검증 게이트 규칙: `docs/rules/verification-gate-rule.md`
 - 금지 규칙: `docs/rules/forbidden-rule.md`
 - 패키지 구조 규칙: `docs/rules/package-structure-rule.md`
