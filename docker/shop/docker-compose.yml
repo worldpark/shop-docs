@@ -17,6 +17,7 @@ services:
     image: postgres:${POSTGRES_IMAGE_TAG:-16.4-alpine}
     container_name: shop-core-postgres
     environment:
+      TZ: Asia/Seoul                                      # 컨테이너 시간대 KST(로그·now() 기준)
       POSTGRES_DB: ${SHOP_CORE_DB_NAME:-shop_core}        # 로컬 기본값 — 운영 아님
       POSTGRES_USER: ${SHOP_CORE_DB_USER:-shop_core}      # 로컬 기본값 — 운영 아님
       POSTGRES_PASSWORD: ${SHOP_CORE_DB_PASSWORD:-shop_core}  # 로컬 기본값 — 운영 아님
@@ -42,6 +43,7 @@ services:
     image: postgres:${POSTGRES_IMAGE_TAG:-16.4-alpine}
     container_name: shop-notification-postgres
     environment:
+      TZ: Asia/Seoul                                            # 컨테이너 시간대 KST(로그·now() 기준)
       POSTGRES_DB: ${NOTIFICATION_DB_NAME:-notification}        # 로컬 기본값 — 운영 아님
       POSTGRES_USER: ${NOTIFICATION_DB_USER:-notification}      # 로컬 기본값 — 운영 아님
       POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-notification}  # 로컬 기본값 — 운영 아님
@@ -70,6 +72,7 @@ services:
     image: apache/kafka:${KAFKA_IMAGE_TAG:-3.8.1}
     container_name: shop-kafka
     environment:
+      TZ: Asia/Seoul                          # 컨테이너 시간대 KST(로그 타임스탬프 기준)
       # KRaft 역할: 단일 노드에서 broker + controller 겸임
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_NODE_ID: 1
@@ -115,6 +118,7 @@ services:
     image: provectuslabs/kafka-ui:${KAFKA_UI_IMAGE_TAG:-latest}
     container_name: shop-kafka-ui
     environment:
+      TZ: Asia/Seoul                          # 컨테이너 시간대 KST(로그 타임스탬프 기준)
       KAFKA_CLUSTERS_0_NAME: local-shop
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: shop-kafka:29092
       DYNAMIC_CONFIG_ENABLED: "false"
@@ -135,6 +139,8 @@ services:
   shop-redis:
     image: redis:${REDIS_IMAGE_TAG:-7.4-alpine}
     container_name: shop-redis
+    environment:
+      TZ: Asia/Seoul                          # 컨테이너 시간대 KST(로그 타임스탬프 기준)
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
