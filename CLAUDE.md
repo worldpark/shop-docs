@@ -9,7 +9,7 @@
 - Backend: Java 21, Spring Boot 3.5.15-SNAPSHOT, Lombok
 - View (shop-core): Thymeleaf (서버 사이드 렌더링)
 - DB: PostgreSQL (프로젝트별 독립 인스턴스)
-- 정적 자산: 로컬 파일 시스템 (이후 Cloudflare R2 + CDN으로 이관 예정)
+- 정적 자산: Cloudflare R2 + CDN
 - 모듈 구조 (shop-core): Spring Modulith
 - 메시징: Kafka (JSON 직렬화)
 - 빌드: Gradle (레포별 독립 빌드)

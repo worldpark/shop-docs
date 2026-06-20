@@ -24,3 +24,5 @@ docker/shop/certbot/
 
 # Build output (Gradle) — Playwright Java E2E 산출물(build/e2e-artifacts/) 포함
 build/
+
+docs/portfolio/
