@@ -24,9 +24,15 @@ x-shop-core-common: &shop-core-common
     SHOP_SECURITY_JWT_SECRET: ${SHOP_SECURITY_JWT_SECRET:?set in .env}  # 전 replica 동일(앵커 1곳)
     SHOP_CRYPTO_KEK_FILE: /run/secrets/kek.b64           # 전 replica 동일 마운트 경로
     SHOP_APP_BASE_URL: https://${SHOP_DOMAIN:?set in .env}
-    SHOP_STORAGE_TYPE: local
-    SHOP_STORAGE_ROOT: /app/uploads
-    SHOP_STORAGE_ASSET_BASE_URL: https://${SHOP_DOMAIN}
+    SHOP_STORAGE_TYPE: ${SHOP_STORAGE_TYPE:-local}                       # local | r2 (CDN 전환 시 r2)
+    SHOP_STORAGE_ROOT: ${SHOP_STORAGE_ROOT:-/app/uploads}                # local 전용(아래 prod-shop-uploads 볼륨)
+    SHOP_STORAGE_ASSET_BASE_URL: ${SHOP_STORAGE_ASSET_BASE_URL:-https://${SHOP_DOMAIN}}  # CDN/R2 공개 베이스(미설정 시 앱 도메인)
+    SHOP_STORAGE_PUBLIC_PREFIX: ${SHOP_STORAGE_PUBLIC_PREFIX:-}          # 공개 키 접두(R2 공개버킷이면 보통 빈값)
+    SHOP_STORAGE_R2_ENDPOINT: ${SHOP_STORAGE_R2_ENDPOINT:-}             # https://<account>.r2.cloudflarestorage.com
+    SHOP_STORAGE_R2_BUCKET: ${SHOP_STORAGE_R2_BUCKET:-}
+    SHOP_STORAGE_R2_REGION: ${SHOP_STORAGE_R2_REGION:-auto}
+    SHOP_STORAGE_R2_ACCESS_KEY: ${SHOP_STORAGE_R2_ACCESS_KEY:-}        # type=r2일 때만 필수(평문 커밋 금지)
+    SHOP_STORAGE_R2_SECRET_KEY: ${SHOP_STORAGE_R2_SECRET_KEY:-}
     SERVER_FORWARD_HEADERS_STRATEGY: framework           # nginx TLS 종단 → X-Forwarded-* 인식(Secure 쿠키/https URL)
   volumes:
     - ./secrets/kek.b64:/run/secrets/kek.b64:ro          # KEK read-only(운영자 호스트 배치)
