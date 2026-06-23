@@ -3,7 +3,7 @@
 # 앱(shop-core, notification)은 IDE에서 localhost로 직접 실행한다.
 # 운영 자격증명이 아님. 실제 .env는 커밋하지 말 것(.gitignore 등록).
 # ============================================================
-# 서비스 5개: shop-core-postgres / shop-notification-postgres / shop-kafka (KRaft) / shop-kafka-ui / shop-redis
+# 서비스 6개: shop-core-postgres / shop-notification-postgres / shop-kafka (KRaft) / shop-kafka-ui / shop-redis / shop-search
 # ZooKeeper 없음: Kafka 3.5 deprecated, 4.0 제거된 레거시이므로 KRaft 채택.
 # ============================================================
 
@@ -155,8 +155,45 @@ services:
       - shop-net
     restart: unless-stopped  # Docker 시작 시 자동 기동(수동 docker stop은 존중)
 
+  # ----------------------------------------------------------
+  # 검색 엔진(Elasticsearch + Nori) 단일 노드 — 로컬 개발 전용 (ADR-011 T1)
+  # 호스트 게시: 9200 (앱이 localhost:9200로 접속)
+  # 로컬 전용 주의: xpack security/TLS OFF. 운영 보안/멀티노드 구성을 가장하지 않는다(Redis 005 원칙).
+  # Nori는 Dockerfile.search 빌드 시 analysis-nori 플러그인으로 내장(_cat/plugins로 확인).
+  # 색인/매핑/쿼리는 후속 Task(T2+3/T4/T5+6) — 본 노드는 기동·연결·health up까지만.
+  # ----------------------------------------------------------
+  shop-search:
+    build:
+      context: .
+      dockerfile: Dockerfile.search
+      args:
+        ES_IMAGE_TAG: ${ES_IMAGE_TAG:-8.15.3}
+    image: shop-search:${ES_IMAGE_TAG:-8.15.3}     # 빌드 결과 태깅(버전 핀)
+    container_name: shop-search
+    environment:
+      TZ: Asia/Seoul
+      discovery.type: single-node                  # 단일 노드 클러스터
+      xpack.security.enabled: "false"              # 로컬 보안 완화(AUTH/TLS off) — 운영 가장 금지
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}   # 로컬 힙 상한 보수적 고정(메모리 폭주 방지)
+      bootstrap.memory_lock: "false"               # mlock 권한 없는 로컬 환경 부팅 안정성 보수값
+    ports:
+      - "${SHOP_CORE_SEARCH_PORT:-9200}:9200"      # 호스트 IDE 앱 접속(9300 transport는 단일노드라 미게시)
+    volumes:
+      - shop-search-data:/usr/share/elasticsearch/data
+    healthcheck:
+      # 단일 노드는 cluster status yellow가 정상(레플리카 미할당). yellow|green 둘 다 healthy로 인정.
+      # ES 공식 이미지(8.x)에는 curl이 내장됨 — 검증 게이트 6 실측 확인.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s                            # ES 부팅이 느림 — PG·Redis(10s)보다 넉넉히
+    networks:
+      - shop-net
+    restart: unless-stopped
+
 # ----------------------------------------------------------
-# Named Volumes (PostgreSQL 데이터 영속 + Redis 데이터 영속)
+# Named Volumes (PostgreSQL 데이터 영속 + Redis 데이터 영속 + ES 데이터 영속)
 # Kafka 로그는 임시(volume 없음) — 후보 A 자동 포맷으로 재기동 시 재포맷
 # ----------------------------------------------------------
 volumes:
@@ -165,6 +202,8 @@ volumes:
   notification-pg-data:
     driver: local
   shop-redis-data:
+    driver: local
+  shop-search-data:
     driver: local
 
 # ----------------------------------------------------------

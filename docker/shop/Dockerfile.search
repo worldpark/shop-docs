@@ -1,0 +1,8 @@
+# syntax=docker/dockerfile:1
+# Elasticsearch + Nori(한국어 형태소) 분석기 내장 이미지.
+# 베이스 태그는 빌드 인자로 핀(재현성). analysis-nori는 ES 버전과 정확히 일치해야 설치된다.
+# 사용: docker build -f Dockerfile.search --build-arg ES_IMAGE_TAG=8.15.3 .
+ARG ES_IMAGE_TAG=8.15.3
+FROM docker.elastic.co/elasticsearch/elasticsearch:${ES_IMAGE_TAG}
+# 번들 플러그인 — 배치형 자동승인(-b), 오프라인 캐시 불필요(공식 레지스트리 자동 매칭)
+RUN bin/elasticsearch-plugin install --batch analysis-nori

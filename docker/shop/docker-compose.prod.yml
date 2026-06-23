@@ -21,6 +21,7 @@ x-shop-core-common: &shop-core-common
     SHOP_CORE_REDIS_HOST: shop-redis
     SHOP_CORE_REDIS_PORT: "6379"
     SHOP_CORE_REDIS_DB: "0"
+    SHOP_CORE_SEARCH_URIS: http://shop-search:9200       # ES 검색 엔진(컨테이너 DNS — ADR-011 T1)
     SHOP_SECURITY_JWT_SECRET: ${SHOP_SECURITY_JWT_SECRET:?set in .env}  # 전 replica 동일(앵커 1곳)
     SHOP_CRYPTO_KEK_FILE: /run/secrets/kek.b64           # 전 replica 동일 마운트 경로
     SHOP_APP_BASE_URL: https://${SHOP_DOMAIN:?set in .env}
@@ -44,6 +45,8 @@ x-shop-core-common: &shop-core-common
       condition: service_healthy
     shop-kafka:
       condition: service_healthy                          # broker ready 후 기동 → KafkaAdmin 토픽 생성 누락 방지
+    shop-search:
+      condition: service_healthy                          # ES ready 후 기동(ADR-011 T1)
   healthcheck:
     test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"' || exit 1"]
     interval: 15s
@@ -267,6 +270,35 @@ services:
     networks:
       - shop-net
 
+  # ---------------- 인프라: Elasticsearch + Nori (상품 검색 보조 인덱스 — ADR-011 T1) ----------------
+  shop-search:
+    build:
+      context: .
+      dockerfile: Dockerfile.search
+      args:
+        ES_IMAGE_TAG: ${ES_IMAGE_TAG:-8.15.3}
+    image: shop-search:${ES_IMAGE_TAG:-8.15.3}
+    container_name: shop-search
+    environment:
+      TZ: Asia/Seoul                                     # 컨테이너 시간대 KST(로그 타임스탬프 기준)
+      discovery.type: single-node
+      xpack.security.enabled: "false"                   # 로컬 보안 완화(AUTH/TLS off)
+      # 운영 보안(인증/TLS)·멀티노드는 매니지드 이관(Elastic Cloud) 또는 후속 운영 Task 범위 — 1차는 단일 노드 + 보안 완화(ADR-011/Task 006 Constraints).
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms512m -Xmx512m}
+      bootstrap.memory_lock: "false"
+    # 호스트 포트 미게시 — 내부망 전용(공격 표면 축소)
+    volumes:
+      - prod-shop-search-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - shop-net
+
 volumes:
   prod-shop-core-pg-data:
     driver: local
@@ -277,6 +309,8 @@ volumes:
   prod-kafka-data:
     driver: local
   prod-shop-uploads:
+    driver: local
+  prod-shop-search-data:
     driver: local
   # 인증서/webroot는 named 볼륨 대신 host bind mount(./certbot/conf, ./certbot/www) — 호스트 가시·백업 용이
 
