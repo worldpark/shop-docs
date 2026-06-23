@@ -240,3 +240,45 @@
   "shippedAt": "2026-06-03T18:00:00+09:00"
 }
 ```
+
+---
+
+## 색인 전용 이벤트 (알림 계약 아님)
+
+> 아래 이벤트는 **shop-core 내부 색인 계약**이다. notification이 구독하지 않으며, shop-core의 product indexer(`groupId=product-search-indexer`)만 구독한다. 알림 6종과 분리된 별개 계약.
+
+## ProductSearchIndexChangedEvent (topic: `product-search-index-changed`)
+
+> 발행 모듈: product. 구독자: **shop-core product indexer(groupId=`product-search-indexer`)** — notification 비구독.
+> 발행 계기: 상품 등록/수정/상태 전이, variant CRUD, 운영자 재고 조정.
+> 의미: "이 productId의 현재 색인 스냅샷이 이렇다" — 멱등 upsert 트리거. 변경 종류를 구분하지 않는다.
+> `displayPrice`·`purchasableVariantCount`는 공개 목록 집계(`findPublicProductsLatest`)와 동일 식으로 산출하여 검색-목록 일관성을 보장한다.
+> `status` 필드는 색인에 보존하며 필터링(ON_SALE 화이트리스트 등)은 읽기(T5+6)에서 처리한다.
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `eventId` | UUID | ✓ | 공통 봉투(멱등 키) |
+| `occurredAt` | ISO-8601(KST +09:00) | ✓ | 공통 봉투. ES external version 소스(epoch millis) |
+| `productId` | long | ✓ | 색인 문서 `_id` |
+| `name` | string | ✓ | 상품명 |
+| `description` | string | ✗(nullable) | 상품 설명 |
+| `categoryId` | Long | ✗(nullable) | 미분류 허용 |
+| `categoryName` | string | ✗(nullable) | 미분류 시 null |
+| `status` | string | ✓ | ProductStatus name(DRAFT/ON_SALE/SOLD_OUT/HIDDEN) — 색인 보존, 필터는 읽기 |
+| `displayPrice` | BigDecimal | ✓ | `COALESCE(MIN 활성 variant price, basePrice)` — 공개목록 집계와 동일 식 |
+| `purchasableVariantCount` | long | ✓ | `활성 AND stock>0` 개수 — 공개목록 집계와 동일 식 |
+
+```json
+{
+  "eventId": "f1a2b3c4-d5e6-7890-abcd-ef1234567890",
+  "occurredAt": "2026-06-23T14:00:00+09:00",
+  "productId": 42,
+  "name": "맥북 케이스",
+  "description": "맥북프로 14인치 전용 케이스",
+  "categoryId": 5,
+  "categoryName": "노트북 액세서리",
+  "status": "ON_SALE",
+  "displayPrice": 25000.00,
+  "purchasableVariantCount": 3
+}
+```
