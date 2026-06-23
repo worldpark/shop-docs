@@ -14,3 +14,4 @@
 | [ADR-008](008-playwright-java-e2e-external-app-target.md) | Accepted | E2E 테스트는 Playwright for Java와 외부 앱 타겟 방식으로 구성한다. |
 | [ADR-009](009-system-wide-kst-timezone.md) | Accepted | 시스템 전역 시간대를 KST로 통일한다. |
 | [ADR-010](010-actuator-micrometer-observability-resilience4j-core-retained.md) | Accepted | Actuator + Micrometer로 관측성을 도입하되, resilience4j는 코어를 유지하고 `resilience4j-micrometer` 바인더로 메트릭만 익스포트한다(자동설정 스타터 미전환). |
+| [ADR-011](011-product-search-elasticsearch-secondary-index.md) | Accepted | 상품 검색은 Elasticsearch(+Nori) 보조 인덱스로 분리하고 PostgreSQL을 SoT로 유지한다(매니지드 DB 이관·한국어 형태소 요구 → in-DB 옵션 탈락). 색인은 Kafka 이벤트 기반, PG에서 재생성 가능, ES 장애 시 DB 폴백. |
